@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 
@@ -8,6 +9,7 @@ import {
   getPublishedNoteBySlug,
   listPublishedNotes,
 } from "@/lib/notes-service";
+import { isGhPagesBuild, listStaticNoteSlugs } from "@/lib/static-notes";
 
 type NoteDetailPageProps = {
   params: Promise<{
@@ -22,6 +24,10 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
 });
 
 export function generateStaticParams() {
+  if (isGhPagesBuild()) {
+    return listStaticNoteSlugs().map((slug) => ({ slug }));
+  }
+
   return [];
 }
 
@@ -82,12 +88,12 @@ export default async function NoteDetailPage({ params }: NoteDetailPageProps) {
           <p className="text-sm uppercase tracking-[0.3em] text-slate-400">
             Note Detail
           </p>
-          <a
+          <Link
             href="/notes"
             className="mt-4 inline-flex text-sm font-semibold text-cyan-200 transition hover:text-white"
           >
             返回 Notes
-          </a>
+          </Link>
           <h1 className="mt-5 max-w-4xl text-4xl font-semibold tracking-tight text-white md:text-5xl">
             {note.title}
           </h1>
@@ -177,12 +183,12 @@ export default async function NoteDetailPage({ params }: NoteDetailPageProps) {
               <p className="mt-4 text-sm leading-7 text-slate-300">
                 我会把公开笔记作为对话的上游内容，所以从单条笔记继续追问，比较接近我平时真实整理和追溯内容的方式。
               </p>
-              <a
+              <Link
                 href={`/assistant?q=${encodeURIComponent(`请基于这条笔记继续展开：${note.title}`)}`}
                 className="mt-6 inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
               >
                 基于这条笔记继续提问
-              </a>
+              </Link>
             </article>
 
             <article className="rounded-[2rem] border border-white/10 bg-slate-950/40 p-6">
@@ -194,7 +200,7 @@ export default async function NoteDetailPage({ params }: NoteDetailPageProps) {
               <div className="mt-6 grid gap-4">
                 {relatedNotes.length ? (
                   relatedNotes.map((relatedNote) => (
-                    <a
+                    <Link
                       key={relatedNote.id}
                       href={`/notes/${relatedNote.slug}`}
                       className="rounded-[1.5rem] border border-white/10 bg-white/5 p-5 transition hover:border-white/20 hover:bg-white/10"
@@ -207,7 +213,7 @@ export default async function NoteDetailPage({ params }: NoteDetailPageProps) {
                           {relatedNote.summary}
                         </p>
                       ) : null}
-                    </a>
+                    </Link>
                   ))
                 ) : (
                   <div className="rounded-[1.5rem] border border-dashed border-white/15 bg-white/5 p-5 text-sm text-slate-400">

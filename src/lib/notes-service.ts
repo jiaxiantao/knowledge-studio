@@ -1,18 +1,10 @@
 import type { Note } from "@prisma/client";
 
 import { getReadyDb } from "@/lib/db";
+import type { NoteRecord } from "@/lib/note-types";
+import { isGhPagesBuild, staticNotes } from "@/lib/static-notes";
 
-export type NoteRecord = {
-  id: string;
-  title: string;
-  slug: string;
-  summary: string | null;
-  contentMarkdown: string;
-  tags: string[];
-  isPublished: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
+export type { NoteRecord } from "@/lib/note-types";
 
 type CreateNoteInput = {
   title: string;
@@ -65,6 +57,10 @@ async function buildUniqueSlug(title: string) {
 }
 
 export async function listNotes() {
+  if (isGhPagesBuild()) {
+    return staticNotes;
+  }
+
   const db = await getReadyDb();
 
   if (!db) {
@@ -91,6 +87,10 @@ export async function listPublishedNotes() {
 }
 
 export async function getPublishedNoteBySlug(slug: string) {
+  if (isGhPagesBuild()) {
+    return staticNotes.find((note) => note.slug === slug && note.isPublished) ?? null;
+  }
+
   const db = await getReadyDb();
 
   if (!db) {
