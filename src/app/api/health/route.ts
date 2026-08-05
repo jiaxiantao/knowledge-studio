@@ -2,22 +2,31 @@ import { NextResponse } from "next/server";
 
 import { getReadyDb, isDbMarkedUnavailable, probeDbConnection } from "@/lib/db";
 import { getLlmLabel, isLlmConfigured } from "@/lib/llm-config";
-import { isPgTrgmEnabled } from "@/lib/pg-trgm";
+
+async function isVectorExtensionEnabled() {
+  const db = await getReadyDb();
+  if (!db) {
+    return false;
+  }
+
+  try {
+    const rows = await db.$queryRawUnsafe<Array<{ exists: boolean }>>(
+      `SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') AS exists`,
+    );
+    return Boolean(rows[0]?.exists);
+  } catch {
+    return false;
+  }
+}
 
 export async function GET() {
   const started = performance.now();
-  let dbOk = false;
-  let dbMs = 0;
-  let pgTrgm = false;
 
   const dbStarted = performance.now();
-  dbOk = await probeDbConnection(true);
-  dbMs = Math.round(performance.now() - dbStarted);
+  const dbOk = await probeDbConnection(true);
+  const dbMs = Math.round(performance.now() - dbStarted);
   const db = dbOk ? await getReadyDb() : null;
-
-  if (db) {
-    pgTrgm = await isPgTrgmEnabled();
-  }
+  const vector = db ? await isVectorExtensionEnabled() : false;
 
   const llmConfigured = isLlmConfigured();
   let llmLabel = "unconfigured";
@@ -29,19 +38,17 @@ export async function GET() {
   }
 
   const totalMs = Math.round(performance.now() - started);
-  const ready = dbOk && llmConfigured;
-  const ok = dbOk;
 
   return NextResponse.json({
-    ok,
-    ready,
+    ok: dbOk,
+    ready: dbOk && llmConfigured,
     db: {
       connected: Boolean(db) && !isDbMarkedUnavailable(),
       ok: dbOk,
       latencyMs: dbMs,
     },
     llm: { configured: llmConfigured, label: llmLabel },
-    search: { pgTrgm },
+    search: { vector },
     server: {
       node: process.version,
       totalMs,

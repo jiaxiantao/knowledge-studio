@@ -5,6 +5,15 @@ export type ChatImageAttachment = {
 
 export type ChatMessageStatus = "streaming" | "complete" | "stopped" | "error";
 
+export type ChatMessageReference = {
+  id: string;
+  title: string;
+  slug: string;
+  summary: string | null;
+  score?: number;
+  similarity?: number;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -13,6 +22,7 @@ export type ChatMessage = {
   status?: ChatMessageStatus;
   confidence?: number;
   alternatives?: string[];
+  references?: ChatMessageReference[];
   createdAt: string;
 };
 
@@ -26,7 +36,9 @@ export type ChatBranch = {
 
 export type ChatSession = {
   id: string;
+  knowledgeBaseId?: string | null;
   title: string;
+  createdAt: string;
   updatedAt: string;
   activeBranchId: string;
   branches: ChatBranch[];

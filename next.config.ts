@@ -17,6 +17,7 @@ const nextConfig: NextConfig = {
     ? {
         env: {
           NEXT_PUBLIC_BASE_PATH: ghPagesBasePath,
+          NEXT_PUBLIC_STATIC_EXPORT: "1",
         },
         turbopack: {},
       }

@@ -1,64 +1,41 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen } from "lucide-react";
 
-import {
-  BranchSwitcher,
-  ChatSessionSidebar,
-} from "@/components/assistant/chat-session-sidebar";
 import { ChatComposer } from "@/components/assistant/chat-composer";
-import { IntelligenceComposerPreview } from "@/components/intelligence-composer-preview";
-import { AssistantContextLinks } from "@/components/assistant-context-links";
-import { IntelligenceLearningPanel } from "@/components/intelligence-learning-panel";
-import { useAuth } from "@/components/auth-provider";
-import { AnimatedContent } from "@/components/reactbits/animated-content";
-import { BlurText } from "@/components/reactbits/blur-text";
-import { BorderGlow } from "@/components/reactbits/border-glow";
-import { DecryptedText } from "@/components/reactbits/decrypted-text";
-import { StarBorder } from "@/components/reactbits/star-border";
-import {
-  ChatMessageBubble,
-  ReferenceCard,
-} from "@/components/assistant/chat-message";
+import { ChatMessageBubble } from "@/components/assistant/chat-message";
+import { ChatSessionSidebar } from "@/components/assistant/chat-session-sidebar";
+import { SuggestedQuestions } from "@/components/assistant/suggested-questions";
+import { ConsoleSubpageLayout } from "@/components/console-page-top-bar";
+import { StaticSiteNotice } from "@/components/static-site-notice";
+import { showToast } from "@/components/ui/toast";
 import { streamChatQuestion, type ChatReference } from "@/lib/chat-stream";
-import type { ChatImageAttachment, ChatMessage, ChatMetrics, ChatSession } from "@/lib/chat-types";
-import { getChatSessionBootstrap } from "@/lib/chat-session-bootstrap";
-import { analyzeComposer, getPreferenceTemplate } from "@/lib/front-intelligence";
+import type { ChatMessage, ChatSession } from "@/lib/chat-types";
+import { loadChatSessionBootstrap } from "@/lib/chat-session-bootstrap";
 import {
-  bumpLearningProfile,
-  defaultIntelligencePreferences,
-  exportIntelligenceConfig,
-  importIntelligenceConfig,
-  loadHistoryEvents,
-  loadLearningProfile,
-  loadIntelligencePreferences,
-  pushHistoryEvent,
-  resetHistoryEvents,
-  resetLearningProfile,
-  saveHistoryEvents,
-  saveLearningProfile,
-  saveIntelligencePreferences,
-  type IntelligenceDepth,
-  type IntelligenceStyle,
-} from "@/lib/front-intelligence-preferences";
+  createChatSessionRemote,
+  deleteChatSessionRemote,
+  saveChatSessionRemote,
+} from "@/lib/chat-sessions-api";
 import {
   createEmptySession,
   deriveSessionTitle,
-  forkBranchFromMessage,
+  buildSessionShareUrl,
+  findUnusedChatSession,
   getActiveBranch,
-  saveSessions,
+  isSessionRenamed,
+  loadPinnedSessionIds,
+  markSessionRenamed,
+  removePinnedSessionId,
+  removeRenamedSessionId,
+  saveActiveSessionId,
+  sortChatSessions,
+  togglePinnedSessionId,
   updateSessionBranch,
 } from "@/lib/chat-sessions";
-import {
-  buildAssistantSessionExport,
-  downloadAssistantSessionExport,
-} from "@/lib/assistant-session-export";
-
-const starterPrompts = [
-  "我在前端架构评审时最先确认什么？",
-  "我通常怎么排查性能问题？",
-  "我如何把 AI 放进工程流程里？",
-];
+import { isStaticSite } from "@/lib/site-mode";
 
 function createMessage(
   role: ChatMessage["role"],
@@ -74,152 +51,259 @@ function createMessage(
   };
 }
 
-function buildQuestionText(question: string, images: ChatImageAttachment[]) {
-  if (!images.length) {
-    return question;
+async function fetchFollowUpSuggestions(question: string, answer: string) {
+  const response = await fetch("/api/chat/suggestions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, answer }),
+  });
+
+  if (!response.ok) {
+    return [] as string[];
   }
 
-  const names = images.map((image) => image.name).join("、");
-  return `${question}\n\n[附件图片: ${names} · 多模态演示，模型侧仍以文本上下文回答]`;
+  const payload = (await response.json()) as { suggestions?: string[] };
+  return Array.isArray(payload.suggestions) ? payload.suggestions : [];
+}
+
+function latestCompletedPair(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 1; index -= 1) {
+    const assistant = messages[index];
+    const user = messages[index - 1];
+
+    if (
+      assistant?.role === "assistant" &&
+      assistant.status === "complete" &&
+      user?.role === "user"
+    ) {
+      return { question: user.content, answer: assistant.content };
+    }
+  }
+
+  return null;
 }
 
 export function AssistantChat({
   initialQuestion = "",
   autoRun = false,
-  llmLabel,
+  knowledgeBaseId,
 }: {
   initialQuestion?: string;
   autoRun?: boolean;
   llmLabel?: string;
+  knowledgeBaseId?: string;
 }) {
   const hasAutoRun = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const cloudHydrated = useRef(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const suggestionRequestId = useRef(0);
+  const sessionsRef = useRef<ChatSession[]>([]);
+  const persistTimers = useRef<Map<string, number>>(new Map());
 
-  const bootstrap = getChatSessionBootstrap();
-  const [sessions, setSessions] = useState<ChatSession[]>(bootstrap.sessions);
-  const [activeSessionId, setActiveSessionId] = useState(bootstrap.activeSessionId);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState("");
+  const [ready, setReady] = useState(() => isStaticSite());
   const [composer, setComposer] = useState(initialQuestion);
-  const [images, setImages] = useState<ChatImageAttachment[]>([]);
-  const [references, setReferences] = useState<ChatReference[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<ChatMetrics>({});
-  const [intelligencePreferences, setIntelligencePreferences] = useState(() =>
-    loadIntelligencePreferences(),
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [knowledgeBaseName, setKnowledgeBaseName] = useState("知识库");
+  const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>(() =>
+    typeof window === "undefined" ? [] : loadPinnedSessionIds(),
   );
-  const [learningProfile, setLearningProfile] = useState(() => loadLearningProfile());
-  const [historyEvents, setHistoryEvents] = useState(() => loadHistoryEvents());
-  const { authenticated } = useAuth();
+
+  const staticSite = isStaticSite();
+
+  useEffect(() => {
+    if (staticSite || !knowledgeBaseId) {
+      if (!knowledgeBaseId && !staticSite) {
+        setReady(true);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setReady(false);
+          setSessions([]);
+          setActiveSessionId("");
+          setError(null);
+
+          const [bootstrap, kbResponse] = await Promise.all([
+            loadChatSessionBootstrap(knowledgeBaseId),
+            fetch(`/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`),
+          ]);
+
+          if (cancelled) {
+            return;
+          }
+
+          if (kbResponse.ok) {
+            const kbPayload = (await kbResponse.json()) as {
+              knowledgeBase?: { name: string };
+            };
+            if (kbPayload.knowledgeBase?.name) {
+              setKnowledgeBaseName(kbPayload.knowledgeBase.name);
+            }
+          }
+
+          sessionsRef.current = bootstrap.sessions;
+          setSessions(bootstrap.sessions);
+          setPinnedSessionIds(loadPinnedSessionIds());
+          setActiveSessionId(bootstrap.activeSessionId);
+          setLoadError(null);
+        } catch (bootstrapError) {
+          if (cancelled) {
+            return;
+          }
+          setLoadError(
+            bootstrapError instanceof Error
+              ? bootstrapError.message
+              : "加载会话失败",
+          );
+        } finally {
+          if (!cancelled) {
+            setReady(true);
+          }
+        }
+      })();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [knowledgeBaseId, staticSite]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!activeSessionId || !knowledgeBaseId) {
+      return;
+    }
+    saveActiveSessionId(activeSessionId, knowledgeBaseId);
+  }, [activeSessionId, knowledgeBaseId]);
+
+  useEffect(() => {
+    const timers = persistTimers.current;
+    return () => {
+      for (const timer of timers.values()) {
+        window.clearTimeout(timer);
+      }
+      timers.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    function flushPendingSessions() {
+      for (const timer of persistTimers.current.values()) {
+        window.clearTimeout(timer);
+      }
+      persistTimers.current.clear();
+
+      for (const session of sessionsRef.current) {
+        void saveChatSessionRemote(session).catch(() => undefined);
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        flushPendingSessions();
+      }
+    }
+
+    window.addEventListener("pagehide", flushPendingSessions);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushPendingSessions);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+  const sortedSessions = useMemo(
+    () => sortChatSessions(sessions, pinnedSessionIds),
+    [sessions, pinnedSessionIds],
+  );
   const activeBranch = activeSession ? getActiveBranch(activeSession) : null;
   const messages = useMemo(() => activeBranch?.messages ?? [], [activeBranch]);
-  const intelligence = useMemo(
-    () => analyzeComposer(composer, messages, intelligencePreferences),
-    [composer, messages, intelligencePreferences],
-  );
+  const isEmpty = messages.length === 0 && !isSubmitting;
 
-  useEffect(() => {
-    saveIntelligencePreferences(intelligencePreferences);
-  }, [intelligencePreferences]);
-  useEffect(() => {
-    saveLearningProfile(learningProfile);
-  }, [learningProfile]);
-  useEffect(() => {
-    saveHistoryEvents(historyEvents);
-  }, [historyEvents]);
-
-  useEffect(() => {
-    if (!authenticated) {
-      cloudHydrated.current = false;
-      return;
+  const suggestedQuestions = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        message.role === "assistant" &&
+        message.status === "complete" &&
+        message.alternatives?.length
+      ) {
+        return message.alternatives;
+      }
     }
-    if (cloudHydrated.current) {
-      return;
-    }
+    return [] as string[];
+  }, [messages]);
 
-    const controller = new AbortController();
-    void fetch("/api/intelligence/profile", {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .then(
-        (payload:
-          | {
-              profile?: {
-                preferences?: typeof intelligencePreferences;
-                learning?: typeof learningProfile;
-                history?: typeof historyEvents;
-              };
-            }
-          | null) => {
-          if (!payload?.profile) {
-            return;
-          }
-          setIntelligencePreferences(
-            payload.profile.preferences ?? defaultIntelligencePreferences,
+  const persistSession = useCallback(
+    (session: ChatSession, options: { immediate?: boolean } = {}) => {
+      const sessionToSave: ChatSession = {
+        ...session,
+        knowledgeBaseId: session.knowledgeBaseId ?? knowledgeBaseId ?? null,
+      };
+      const existing = persistTimers.current.get(session.id);
+      if (existing) {
+        window.clearTimeout(existing);
+        persistTimers.current.delete(session.id);
+      }
+
+      const run = async () => {
+        try {
+          const saved = await saveChatSessionRemote(sessionToSave);
+          setSessions((current) => {
+            const next = sortChatSessions(
+              current.map((item) => (item.id === saved.id ? saved : item)),
+              pinnedSessionIds,
+            );
+            sessionsRef.current = next;
+            return next;
+          });
+        } catch (persistError) {
+          setError(
+            persistError instanceof Error
+              ? persistError.message
+              : "保存会话失败",
           );
-          setLearningProfile(payload.profile.learning ?? loadLearningProfile());
-          setHistoryEvents(payload.profile.history ?? []);
-          cloudHydrated.current = true;
-        },
-      )
-      .catch(() => undefined);
+        }
+      };
 
-    return () => controller.abort();
-  }, [authenticated]);
+      if (options.immediate) {
+        void run();
+        return;
+      }
 
-  useEffect(() => {
-    if (!authenticated || !cloudHydrated.current) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void fetch("/api/intelligence/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          preferences: intelligencePreferences,
-          learning: learningProfile,
-          history: historyEvents,
-        }),
-      });
-    }, 800);
-    return () => window.clearTimeout(timer);
-  }, [authenticated, historyEvents, intelligencePreferences, learningProfile]);
+      const timer = window.setTimeout(() => {
+        persistTimers.current.delete(session.id);
+        void run();
+      }, 450);
 
-  const preferenceTemplate = useMemo(
-    () => getPreferenceTemplate(intelligencePreferences),
-    [intelligencePreferences],
+      persistTimers.current.set(session.id, timer);
+    },
+    [knowledgeBaseId, pinnedSessionIds],
   );
-
-  const applyStylePreference = useCallback((style: IntelligenceStyle) => {
-    setIntelligencePreferences((current) => {
-      const next = { ...current, style };
-      setHistoryEvents((history) => pushHistoryEvent(history, next));
-      return next;
-    });
-    setLearningProfile((current) => bumpLearningProfile(current, { style }));
-  }, []);
-
-  const applyDepthPreference = useCallback((depth: IntelligenceDepth) => {
-    setIntelligencePreferences((current) => {
-      const next = { ...current, depth };
-      setHistoryEvents((history) => pushHistoryEvent(history, next));
-      return next;
-    });
-    setLearningProfile((current) => bumpLearningProfile(current, { depth }));
-  }, []);
-
-  const persistSessions = useCallback((next: ChatSession[]) => {
-    setSessions(next);
-    saveSessions(next);
-  }, []);
 
   const patchActiveBranch = useCallback(
-    (updater: (messages: ChatMessage[]) => ChatMessage[]) => {
+    (
+      updater: (messages: ChatMessage[]) => ChatMessage[],
+      options: { persist?: boolean; immediate?: boolean } = {},
+    ) => {
+      const shouldPersist = options.persist ?? true;
+
       setSessions((allSessions) => {
         const nextSessions = allSessions.map((session) => {
           if (session.id !== activeSessionId) {
@@ -231,15 +315,58 @@ export function AssistantChat({
 
           return {
             ...updated,
-            title: deriveSessionTitle(getActiveBranch(updated).messages),
+            knowledgeBaseId: updated.knowledgeBaseId ?? knowledgeBaseId ?? null,
+            title: isSessionRenamed(session.id)
+              ? session.title
+              : deriveSessionTitle(getActiveBranch(updated).messages),
           };
         });
 
-        saveSessions(nextSessions);
-        return nextSessions;
+        sessionsRef.current = nextSessions;
+
+        if (shouldPersist) {
+          const updatedSession = nextSessions.find(
+            (session) => session.id === activeSessionId,
+          );
+          if (updatedSession) {
+            persistSession(updatedSession, { immediate: options.immediate });
+          }
+        }
+
+        return sortChatSessions(nextSessions, pinnedSessionIds);
       });
     },
-    [activeSessionId],
+    [activeSessionId, knowledgeBaseId, persistSession, pinnedSessionIds],
+  );
+
+  const attachSuggestions = useCallback(
+    async (assistantId: string, question: string, answer: string) => {
+      const requestId = suggestionRequestId.current + 1;
+      suggestionRequestId.current = requestId;
+      setIsSuggesting(true);
+
+      try {
+        const suggestions = await fetchFollowUpSuggestions(question, answer);
+        if (suggestionRequestId.current !== requestId) {
+          return;
+        }
+
+        patchActiveBranch(
+          (current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, alternatives: suggestions }
+                : message,
+            ),
+          { immediate: true },
+        );
+      } finally {
+        if (suggestionRequestId.current === requestId) {
+          setIsSuggesting(false);
+        }
+      }
+    },
+    [patchActiveBranch],
   );
 
   const runStream = useCallback(
@@ -249,8 +376,6 @@ export function AssistantChat({
     ) => {
       setError(null);
       setIsSubmitting(true);
-      setReferences([]);
-      setMetrics({});
 
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -261,76 +386,67 @@ export function AssistantChat({
       });
       const assistantId = assistantMessage.id;
 
-      patchActiveBranch((current) => {
-        let base = current;
-        if (options.replaceLastAssistant) {
-          const lastAssistantIndex = findLastIndex(
-            base,
-            (message) => message.role === "assistant",
-          );
-          if (lastAssistantIndex >= 0) {
-            base = base.slice(0, lastAssistantIndex);
+      patchActiveBranch(
+        (current) => {
+          let base = current;
+          if (options.replaceLastAssistant) {
+            const lastAssistantIndex = findLastIndex(
+              base,
+              (message) => message.role === "assistant",
+            );
+            if (lastAssistantIndex >= 0) {
+              base = base.slice(0, lastAssistantIndex);
+            }
           }
-        }
-        return [...base, assistantMessage];
-      });
+          return [...base, assistantMessage];
+        },
+        { persist: false },
+      );
 
       let streamed = "";
-      const startedAt = performance.now();
-      let firstRefAt: number | null = null;
-      let firstChunkAt: number | null = null;
+      let latestReferences: ChatReference[] = [];
       let metaConfidence: number | undefined;
-      let metaAlternatives: string[] | undefined;
 
       try {
         await streamChatQuestion(
           question,
           {
             onReferences: (items) => {
-              if (firstRefAt === null) {
-                firstRefAt = performance.now();
-                setMetrics((current) => ({
-                  ...current,
-                  searchMs: Math.round(firstRefAt! - startedAt),
-                }));
-              }
-              setReferences(items);
+              latestReferences = items;
+              patchActiveBranch(
+                (current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? { ...message, references: items }
+                      : message,
+                  ),
+                { persist: false },
+              );
             },
             onMeta: (meta) => {
               metaConfidence = meta.confidence;
-              metaAlternatives = meta.alternatives;
             },
             onChunk: (text) => {
-              if (firstChunkAt === null) {
-                firstChunkAt = performance.now();
-                setMetrics((current) => ({
-                  ...current,
-                  ttftMs: Math.round(firstChunkAt! - startedAt),
-                }));
-              }
               streamed += text;
-              patchActiveBranch((current) =>
-                current.map((message) =>
-                  message.id === assistantId
-                    ? { ...message, content: streamed }
-                    : message,
-                ),
+              patchActiveBranch(
+                (current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? { ...message, content: streamed }
+                      : message,
+                  ),
+                { persist: false },
               );
             },
             onError: (message) => {
               throw new Error(message);
-            },
-            onDone: () => {
-              setMetrics((current) => ({
-                ...current,
-                totalMs: Math.round(performance.now() - startedAt),
-              }));
             },
           },
           {
             signal: controller.signal,
             regenerate: options.regenerate,
             temperature: options.regenerate ? 0.55 : undefined,
+            knowledgeBaseId,
           },
         );
 
@@ -338,35 +454,43 @@ export function AssistantChat({
           throw new Error("没有收到流式内容");
         }
 
-        patchActiveBranch((current) =>
-          current.map((message) =>
-            message.id === assistantId
-              ? {
-                  ...message,
-                  content:
-                    streamed ||
-                    "（已停止或无内容返回）",
-                  status: controller.signal.aborted ? "stopped" : "complete",
-                  confidence: metaConfidence,
-                  alternatives: metaAlternatives,
-                }
-              : message,
-          ),
-        );
-      } catch (submissionError) {
-        if ((submissionError as { name?: string }).name === "AbortError") {
-          patchActiveBranch((current) =>
+        const completed = !controller.signal.aborted;
+        patchActiveBranch(
+          (current) =>
             current.map((message) =>
               message.id === assistantId
                 ? {
                     ...message,
-                    content: streamed || "（生成已停止）",
-                    status: "stopped",
+                    content: streamed || "（已停止或无内容返回）",
+                    status: completed ? "complete" : "stopped",
                     confidence: metaConfidence,
-                    alternatives: metaAlternatives,
+                    references: latestReferences,
+                    alternatives: undefined,
                   }
                 : message,
             ),
+          { immediate: true },
+        );
+
+        if (completed && streamed.trim()) {
+          void attachSuggestions(assistantId, question, streamed);
+        }
+      } catch (submissionError) {
+        if ((submissionError as { name?: string }).name === "AbortError") {
+          patchActiveBranch(
+            (current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      content: streamed || "（生成已停止）",
+                      status: "stopped",
+                      confidence: metaConfidence,
+                      references: latestReferences,
+                    }
+                  : message,
+              ),
+            { immediate: true },
           );
         } else {
           const message =
@@ -374,18 +498,20 @@ export function AssistantChat({
               ? submissionError.message
               : "问答失败";
           setError(message);
-          patchActiveBranch((current) =>
-            current.map((message) =>
-              message.id === assistantId
-                ? {
-                    ...message,
-                    content:
-                      streamed ||
-                      "这次回答没有成功返回。请确认 Ollama 已启动。",
-                    status: "error",
-                  }
-                : message,
-            ),
+          patchActiveBranch(
+            (current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      content:
+                        streamed ||
+                        "这次回答没有成功返回。请确认 Ollama 与向量模型已就绪。",
+                      status: "error",
+                    }
+                  : message,
+              ),
+            { immediate: true },
           );
         }
       } finally {
@@ -393,373 +519,313 @@ export function AssistantChat({
         abortRef.current = null;
       }
     },
-    [patchActiveBranch],
+    [attachSuggestions, knowledgeBaseId, patchActiveBranch],
   );
 
   const submitUserMessage = useCallback(
-    async (rawQuestion: string, userImages: ChatImageAttachment[] = []) => {
+    async (rawQuestion: string) => {
       const trimmed = rawQuestion.trim();
-      if (!trimmed || isSubmitting) {
+      if (!trimmed || isSubmitting || isStaticSite() || !ready) {
         return;
       }
 
-      const question = buildQuestionText(trimmed, userImages);
+      patchActiveBranch(
+        (current) => [...current, createMessage("user", trimmed)],
+        { persist: false },
+      );
 
-      patchActiveBranch((current) => [
-        ...current,
-        createMessage("user", trimmed, { images: userImages }),
-      ]);
-
-      await runStream(question);
+      await runStream(trimmed);
     },
-    [isSubmitting, patchActiveBranch, runStream],
+    [isSubmitting, patchActiveBranch, ready, runStream],
   );
 
   useEffect(() => {
     const trimmed = initialQuestion?.trim();
 
-    if (!autoRun || !trimmed || hasAutoRun.current || !activeSession) {
+    if (
+      !autoRun ||
+      !trimmed ||
+      hasAutoRun.current ||
+      !ready ||
+      !activeSession
+    ) {
       return;
     }
 
     hasAutoRun.current = true;
     void submitUserMessage(trimmed);
-  }, [autoRun, initialQuestion, activeSession, submitUserMessage]);
+  }, [autoRun, initialQuestion, activeSession, ready, submitUserMessage]);
+
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTop = node.scrollHeight;
+  }, [messages, isSubmitting, suggestedQuestions]);
+
+  useEffect(() => {
+    if (
+      !ready ||
+      staticSite ||
+      isSubmitting ||
+      isSuggesting ||
+      suggestedQuestions.length
+    ) {
+      return;
+    }
+
+    const pair = latestCompletedPair(messages);
+    if (!pair) {
+      return;
+    }
+
+    const lastAssistant = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" && message.status === "complete",
+      );
+
+    if (!lastAssistant || lastAssistant.alternatives) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void attachSuggestions(lastAssistant.id, pair.question, pair.answer);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    attachSuggestions,
+    isSubmitting,
+    isSuggesting,
+    messages,
+    ready,
+    staticSite,
+    suggestedQuestions.length,
+  ]);
+
+  async function handleCreateSession() {
+    const existingUnused = findUnusedChatSession(sessionsRef.current);
+    if (existingUnused) {
+      setActiveSessionId(existingUnused.id);
+      setComposer("");
+      setError(null);
+      showToast("已有未开始的新对话", "success");
+      return;
+    }
+
+    try {
+      const fresh = await createChatSessionRemote(
+        createEmptySession("新对话", knowledgeBaseId),
+      );
+      const next = sortChatSessions(
+        [fresh, ...sessionsRef.current],
+        pinnedSessionIds,
+      );
+      sessionsRef.current = next;
+      setSessions(next);
+      setActiveSessionId(fresh.id);
+      setComposer("");
+      setError(null);
+    } catch (createError) {
+      setError(
+        createError instanceof Error ? createError.message : "新建会话失败",
+      );
+    }
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    try {
+      await deleteChatSessionRemote(sessionId);
+      removePinnedSessionId(sessionId);
+      removeRenamedSessionId(sessionId);
+      setPinnedSessionIds(loadPinnedSessionIds());
+      let next = sessionsRef.current.filter(
+        (session) => session.id !== sessionId,
+      );
+
+      if (!next.length) {
+        const fresh = await createChatSessionRemote(
+        createEmptySession("新对话", knowledgeBaseId),
+      );
+        next = [fresh];
+      }
+
+      sessionsRef.current = next;
+      setSessions(sortChatSessions(next, pinnedSessionIds));
+      if (sessionId === activeSessionId || !next.some((s) => s.id === activeSessionId)) {
+        setActiveSessionId(next[0]?.id ?? "");
+        setComposer("");
+        setError(null);
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "删除会话失败",
+      );
+    }
+  }
+
+  async function handleRenameSession(sessionId: string, title: string) {
+    const target = sessionsRef.current.find((session) => session.id === sessionId);
+    if (!target) {
+      return;
+    }
+
+    const updated: ChatSession = {
+      ...target,
+      title,
+      updatedAt: new Date().toISOString(),
+    };
+
+    markSessionRenamed(sessionId);
+
+    try {
+      await saveChatSessionRemote(updated);
+      const next = sessionsRef.current.map((session) =>
+        session.id === sessionId ? updated : session,
+      );
+      sessionsRef.current = next;
+      setSessions(sortChatSessions(next, pinnedSessionIds));
+    } catch (renameError) {
+      setError(
+        renameError instanceof Error ? renameError.message : "重命名失败",
+      );
+    }
+  }
+
+  function handleTogglePinSession(sessionId: string) {
+    const nextPinned = togglePinnedSessionId(sessionId);
+    setPinnedSessionIds(nextPinned);
+  }
+
+  async function handlePrepareShare(sessionId: string) {
+    const existingTimer = persistTimers.current.get(sessionId);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      persistTimers.current.delete(sessionId);
+    }
+
+    const target = sessionsRef.current.find((session) => session.id === sessionId);
+    if (!target) {
+      throw new Error("会话不存在");
+    }
+
+    const branch = getActiveBranch(target);
+    if (!branch.messages.length) {
+      throw new Error("当前对话暂无内容，无法分享");
+    }
+
+    await saveChatSessionRemote(target);
+    return buildSessionShareUrl(sessionId);
+  }
+
+  function handleClearCurrent() {
+    patchActiveBranch(() => [], { immediate: true });
+    setComposer("");
+    setError(null);
+  }
 
   function handleStop() {
     abortRef.current?.abort();
   }
 
-  function handleNewSession() {
-    const fresh = createEmptySession();
-    const next = [fresh, ...sessions];
-    persistSessions(next);
-    setActiveSessionId(fresh.id);
-    setComposer("");
-    setImages([]);
-    setReferences([]);
-    setError(null);
-  }
-
-  function handleDeleteSession(sessionId: string) {
-    const next = sessions.filter((session) => session.id !== sessionId);
-    if (!next.length) {
-      handleNewSession();
-      return;
-    }
-    persistSessions(next);
-    if (activeSessionId === sessionId) {
-      setActiveSessionId(next[0].id);
-    }
-  }
-
-  function handleSwitchBranch(branchId: string) {
-    if (!activeSession) {
-      return;
-    }
-
-    persistSessions(
-      sessions.map((session) =>
-        session.id === activeSession.id
-          ? { ...session, activeBranchId: branchId }
-          : session,
-      ),
+  if (!knowledgeBaseId) {
+    return (
+      <ConsoleSubpageLayout backHref="/assistant" backLabel="返回问答列表" fullHeight>
+        <div className="flex h-full min-h-0 items-center justify-center rounded-3xl border border-dashed border-white/10 bg-slate-950/40 px-5 py-16 text-center text-sm text-slate-400">
+          请先从{" "}
+          <Link href="/assistant" className="text-cyan-200 hover:text-white">
+            知识问答列表
+          </Link>{" "}
+          选择要使用的知识库。
+        </div>
+      </ConsoleSubpageLayout>
     );
   }
 
-  function handleEditMessage(messageId: string, content: string) {
-    if (!content.trim()) {
-      return;
-    }
-
-    const index = messages.findIndex((message) => message.id === messageId);
-    if (index === -1) {
-      return;
-    }
-
-    const target = messages[index];
-    const kept = messages.slice(0, index + 1).map((message, idx) =>
-      idx === index ? { ...message, content: content.trim() } : message,
-    );
-
-    patchActiveBranch(() => kept);
-
-    void runStream(
-      buildQuestionText(content.trim(), target.images ?? []),
+  if (!ready) {
+    return (
+      <ConsoleSubpageLayout backHref="/assistant" backLabel="返回问答列表" fullHeight>
+        <div className="flex h-full min-h-0 items-center justify-center rounded-3xl border border-white/10 bg-slate-950/40 px-5 py-16 text-center text-sm text-slate-500">
+          加载会话…
+        </div>
+      </ConsoleSubpageLayout>
     );
   }
 
-  function handleRegenerate() {
-    const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    if (!lastUser) {
-      return;
-    }
-
-    patchActiveBranch((current) => {
-      const lastAssistantIndex = findLastIndex(
-        current,
-        (message) => message.role === "assistant",
-      );
-      if (lastAssistantIndex === -1) {
-        return current;
-      }
-      return current.slice(0, lastAssistantIndex);
-    });
-
-    void runStream(buildQuestionText(lastUser.content, lastUser.images ?? []), {
-      regenerate: true,
-      replaceLastAssistant: true,
-    });
-  }
-
-  function handleBranch(messageId: string) {
-    if (!activeSession) {
-      return;
-    }
-
-    const forked = forkBranchFromMessage(activeSession, messageId);
-    persistSessions(
-      sessions.map((session) =>
-        session.id === forked.id ? forked : session,
-      ),
+  if (loadError) {
+    return (
+      <ConsoleSubpageLayout backHref="/assistant" backLabel="返回问答列表" fullHeight>
+        <div className="rounded-3xl border border-rose-400/20 bg-rose-400/10 px-5 py-10 text-center text-sm text-rose-100">
+          {loadError}
+          <p className="mt-2 text-xs text-rose-100/70">
+            请确认 PostgreSQL 已启动，并执行过 `pnpm db:setup`。
+          </p>
+        </div>
+      </ConsoleSubpageLayout>
     );
-    setActiveSessionId(forked.id);
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.32fr_1.68fr]">
+    <ConsoleSubpageLayout backHref="/assistant" backLabel="返回问答列表" fullHeight>
+      <div className="grid h-full min-h-0 items-stretch gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
       <ChatSessionSidebar
-        sessions={sessions}
+        sessions={sortedSessions}
         activeSessionId={activeSessionId}
-        onSelect={setActiveSessionId}
-        onCreate={handleNewSession}
-        onDelete={handleDeleteSession}
+        onSelect={(sessionId) => {
+          setActiveSessionId(sessionId);
+          setError(null);
+        }}
+        onCreate={() => {
+          void handleCreateSession();
+        }}
+        onRename={(sessionId, title) => {
+          void handleRenameSession(sessionId, title);
+        }}
+        onTogglePin={handleTogglePinSession}
+        onPrepareShare={async (session) => handlePrepareShare(session.id)}
+        onDelete={(sessionId) => {
+          void handleDeleteSession(sessionId);
+        }}
       />
 
-      <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <BorderGlow className="rounded-4xl" glowColor="rgba(103, 232, 249, 0.22)">
-        <div className="rounded-4xl border border-white/10 bg-slate-950/40 p-7">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight text-white">
-                <BlurText text="对话窗口" animateBy="words" />
-              </h2>
-              {activeSession ? (
-                <p className="mt-1 text-sm text-slate-500">{activeSession.title}</p>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1 font-mono text-[10px] text-cyan-100">
-                SSE · Markdown · 会话
-              </span>
-              {activeSession ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    downloadAssistantSessionExport(
-                      buildAssistantSessionExport({
-                        session: activeSession,
-                        composer,
-                        preferences: intelligencePreferences,
-                        metrics,
-                      }),
-                    );
-                  }}
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-slate-300 transition hover:border-cyan-300/30 hover:text-white"
-                >
-                  导出会话 JSON
-                </button>
-              ) : null}
-              {llmLabel ? (
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] text-slate-300">
-                  {llmLabel}
-                </span>
-              ) : null}
-            </div>
-          </div>
-
-          {activeSession ? (
-            <div className="mt-4">
-              <BranchSwitcher session={activeSession} onSwitch={handleSwitchBranch} />
-            </div>
-          ) : null}
-
-          <div className="mt-5 flex flex-wrap gap-2">
-            {starterPrompts.map((prompt) => (
-              <StarBorder
-                key={prompt}
-                className="rounded-full"
-                color="rgba(103, 232, 249, 0.28)"
-                speed="10s"
-              >
-                <button
-                  type="button"
-                  onClick={() => setComposer(prompt)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-white/20 hover:bg-white/10"
-                >
-                  {prompt}
-                </button>
-              </StarBorder>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
-              Frontend Intelligence
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(
-                [
-                  { key: "steps", label: "偏步骤" },
-                  { key: "risk", label: "偏风险" },
-                  { key: "code", label: "偏代码" },
-                ] as Array<{ key: IntelligenceStyle; label: string }>
-              ).map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => applyStylePreference(item.key)}
-                  className={`rounded-full border px-3 py-1 text-[11px] ${
-                    intelligencePreferences.style === item.key
-                      ? "border-cyan-200/40 bg-cyan-200/15 text-cyan-100"
-                      : "border-white/10 text-slate-400"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-              {(
-                [
-                  { key: "brief", label: "简略" },
-                  { key: "detailed", label: "详细" },
-                ] as Array<{ key: IntelligenceDepth; label: string }>
-              ).map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => applyDepthPreference(item.key)}
-                  className={`rounded-full border px-3 py-1 text-[11px] ${
-                    intelligencePreferences.depth === item.key
-                      ? "border-emerald-200/40 bg-emerald-200/15 text-emerald-100"
-                      : "border-white/10 text-slate-400"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  setIntelligencePreferences((current) => {
-                    const next = {
-                      ...current,
-                      includeMetrics: !current.includeMetrics,
-                    };
-                    setHistoryEvents((history) => pushHistoryEvent(history, next));
-                    return next;
-                  })
-                }
-                className={`rounded-full border px-3 py-1 text-[11px] ${
-                  intelligencePreferences.includeMetrics
-                    ? "border-violet-200/40 bg-violet-200/15 text-violet-100"
-                    : "border-white/10 text-slate-400"
-                }`}
-              >
-                指标{intelligencePreferences.includeMetrics ? "已开启" : "已关闭"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIntelligencePreferences(defaultIntelligencePreferences);
-                  setHistoryEvents((history) =>
-                    pushHistoryEvent(history, defaultIntelligencePreferences),
-                  );
-                  setLearningProfile(resetLearningProfile());
-                }}
-                className="rounded-full border border-white/10 px-3 py-1 text-[11px] text-slate-400"
-              >
-                恢复默认
-              </button>
-            </div>
-            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                <DecryptedText text="当前模板预览" revealOnHover speed={14} />
+      <div className="flex min-h-0 flex-1 flex-col rounded-3xl border border-white/10 bg-slate-950/40">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-400/15 text-violet-200">
+              <BookOpen className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs text-slate-500">当前知识库</p>
+              <p className="truncate text-sm font-medium text-white">
+                {knowledgeBaseName}
               </p>
-              <ul className="mt-2 space-y-1 text-xs text-slate-300">
-                {preferenceTemplate.map((line) => (
-                  <li key={line}>- {line}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="mt-3">
-              <IntelligenceLearningPanel
-                learningProfile={learningProfile}
-                preferences={intelligencePreferences}
-                onApplyRecommendation={(next) =>
-                  setIntelligencePreferences((current) => {
-                    const merged = {
-                      ...current,
-                      style: next.style,
-                      depth: next.depth,
-                    };
-                    setHistoryEvents((history) => pushHistoryEvent(history, merged));
-                    return merged;
-                  })
-                }
-                history={historyEvents}
-                onResetLearning={() => {
-                  setLearningProfile(resetLearningProfile());
-                  setHistoryEvents(resetHistoryEvents());
-                }}
-                onExport={() => {
-                  const blob = new Blob(
-                    [
-                      exportIntelligenceConfig({
-                        preferences: intelligencePreferences,
-                        learning: learningProfile,
-                        history: historyEvents,
-                      }),
-                    ],
-                    { type: "application/json" },
-                  );
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download = "assistant-intelligence-config.json";
-                  link.click();
-                  URL.revokeObjectURL(url);
-                }}
-                onImport={(raw) => {
-                  const imported = importIntelligenceConfig(raw);
-                  if (!imported) {
-                    setError("导入失败：配置格式无效");
-                    return;
-                  }
-                  setIntelligencePreferences(imported.preferences);
-                  setLearningProfile(imported.learning);
-                  setHistoryEvents(imported.history);
-                  setError(null);
-                }}
-              />
-            </div>
-            <div className="mt-3">
-              <IntelligenceComposerPreview
-                intelligence={intelligence}
-                onApplyRewrite={() =>
-                  setComposer(intelligence.rewrittenPrompt ?? composer)
-                }
-                onAppendAction={(action) =>
-                  setComposer((current) => `${current.trim()}\n${action}`.trim())
-                }
-                onSelectFollowUp={(follow) => setComposer(follow)}
-              />
-              <AssistantContextLinks intelligence={intelligence} />
             </div>
           </div>
+          <Link
+            href="/assistant"
+            className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+          >
+            切换知识库
+          </Link>
+        </div>
 
-          <div className="mt-6 grid max-h-128 gap-4 overflow-y-auto pr-1">
-            {messages.length ? (
-              messages.map((message, index) => (
+        {staticSite ? (
+          <div className="border-b border-white/10 p-4">
+            <StaticSiteNotice feature="知识问答" />
+          </div>
+        ) : null}
+
+        <div ref={listRef} className="flex-1 overflow-y-auto px-5 py-6">
+          {isEmpty ? (
+            <div className="flex h-full min-h-[18rem] items-center justify-center">
+              <p className="text-sm text-slate-500">输入问题开始问答</p>
+            </div>
+          ) : (
+            <div className="mx-auto grid max-w-3xl gap-5">
+              {messages.map((message, index) => (
                 <ChatMessageBubble
                   key={message.id}
                   message={message}
@@ -768,98 +834,65 @@ export function AssistantChat({
                     message.role === "assistant" &&
                     index === messages.length - 1
                   }
-                  onEdit={
-                    message.role === "user"
-                      ? (content) => handleEditMessage(message.id, content)
-                      : undefined
-                  }
-                  onRegenerate={
-                    message.role === "assistant" &&
-                    index === messages.length - 1 &&
-                    !isSubmitting
-                      ? handleRegenerate
-                      : undefined
-                  }
-                  onBranch={() => handleBranch(message.id)}
-                  onUseAlternative={(prompt) => {
-                    setComposer(prompt);
-                    void submitUserMessage(prompt);
-                  }}
                 />
-              ))
-            ) : (
-              <AnimatedContent>
-                <div className="rounded-3xl border border-dashed border-white/15 bg-white/5 p-6 text-sm text-slate-400">
-                  <DecryptedText
-                    text="流式 UI · 图片/语音输入 · 会话分支 · 置信度与重新生成"
-                    speed={12}
-                  />
-                </div>
-              </AnimatedContent>
-            )}
-          </div>
-
-          {error ? (
-            <div className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              {error}
-            </div>
-          ) : null}
-
-          <ChatComposer
-            value={composer}
-            onChange={setComposer}
-            images={images}
-            onImagesChange={setImages}
-            isSubmitting={isSubmitting}
-            onSubmit={() => {
-              const value = composer;
-              setComposer("");
-              const picked = images;
-              setImages([]);
-              void submitUserMessage(value, picked);
-            }}
-            onStop={handleStop}
-          />
-        </div>
-        </BorderGlow>
-
-        <aside className="grid gap-4">
-          <BorderGlow className="rounded-4xl" glowColor="rgba(103, 232, 249, 0.18)">
-          <article className="rounded-4xl border border-white/10 bg-slate-950/40 p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200/75">
-              Observability
-            </p>
-            <div className="mt-4 grid gap-2 text-xs font-mono text-slate-300">
-              <MetricRow label="检索" value={metrics.searchMs} />
-              <MetricRow label="TTFT" value={metrics.ttftMs} />
-              <MetricRow label="Total" value={metrics.totalMs} />
-            </div>
-          </article>
-          </BorderGlow>
-
-          <BorderGlow className="rounded-4xl" glowColor="rgba(167, 139, 250, 0.18)">
-          <article className="rounded-4xl border border-white/10 bg-slate-950/40 p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200/75">
-              References
-            </p>
-            <p className="mt-3 text-sm text-slate-400">
-              召回分数影响置信度展示；可点备选视角重新提问。
-            </p>
-          </article>
-          </BorderGlow>
-
-          {references.length ? (
-            references.map((reference) => (
-              <ReferenceCard key={reference.id} reference={reference} />
-            ))
-          ) : (
-            <div className="rounded-[1.75rem] border border-dashed border-white/15 bg-slate-950/35 p-6 text-sm text-slate-400">
-              <DecryptedText text="发送问题后展示召回笔记。" speed={12} />
+              ))}
             </div>
           )}
-        </aside>
+        </div>
+
+        {error ? (
+          <div className="mx-5 mb-3 rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
+
+        {!staticSite ? (
+          <div className="border-t border-white/10 px-5 py-4">
+            <div className="mx-auto max-w-3xl">
+              <div className="mb-2 flex justify-end">
+                {!isEmpty ? (
+                  <button
+                    type="button"
+                    onClick={handleClearCurrent}
+                    className="text-xs text-slate-500 transition hover:text-slate-300"
+                  >
+                    清空对话
+                  </button>
+                ) : null}
+              </div>
+
+              <SuggestedQuestions
+                questions={suggestedQuestions}
+                disabled={isSubmitting}
+                onSelect={(question) => {
+                  setComposer("");
+                  void submitUserMessage(question);
+                }}
+              />
+
+              {isSuggesting && !suggestedQuestions.length ? (
+                <p className="mb-3 text-[11px] text-slate-600">
+                  正在生成推荐追问…
+                </p>
+              ) : null}
+
+              <ChatComposer
+                value={composer}
+                onChange={setComposer}
+                isSubmitting={isSubmitting}
+                onSubmit={() => {
+                  const value = composer;
+                  setComposer("");
+                  void submitUserMessage(value);
+                }}
+                onStop={handleStop}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
-    </div>
+      </div>
+    </ConsoleSubpageLayout>
   );
 }
 
@@ -874,15 +907,4 @@ function findLastIndex<T>(
   }
 
   return -1;
-}
-
-function MetricRow({ label, value }: { label: string; value?: number }) {
-  return (
-    <div className="flex justify-between gap-4 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-      <span>{label}</span>
-      <span className="text-cyan-100">
-        {value != null ? `${value} ms` : "—"}
-      </span>
-    </div>
-  );
 }

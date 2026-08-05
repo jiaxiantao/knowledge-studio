@@ -1,5 +1,4 @@
-import { AuthProvider } from "@/components/auth-provider";
-import { SiteHeader } from "@/components/site-header";
+import { SiteConsoleLayout } from "@/components/site-console-layout";
 import { SiteShell } from "@/components/site-shell";
 
 export default function SiteLayout({
@@ -8,13 +7,8 @@ export default function SiteLayout({
   children: React.ReactNode;
 }) {
   return (
-    <AuthProvider>
-      <SiteShell>
-        <div className="flex min-h-screen flex-col text-foreground">
-          <SiteHeader />
-          <div className="flex-1">{children}</div>
-        </div>
-      </SiteShell>
-    </AuthProvider>
+    <SiteShell>
+      <SiteConsoleLayout>{children}</SiteConsoleLayout>
+    </SiteShell>
   );
 }

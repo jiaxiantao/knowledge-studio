@@ -24,35 +24,60 @@ function getClient() {
 
 function buildContext(contextBlocks: AnswerQuestionArgs["contextBlocks"]) {
   return contextBlocks
-    .map((note, index) => {
+    .map((block, index) => {
       const content =
-        note.contentMarkdown.length > 2400
-          ? `${note.contentMarkdown.slice(0, 2400)}…`
-          : note.contentMarkdown;
+        block.contentMarkdown.length > 2400
+          ? `${block.contentMarkdown.slice(0, 2400)}…`
+          : block.contentMarkdown;
 
       return [
-        `Note ${index + 1}`,
-        `ID: ${note.id}`,
-        `Title: ${note.title}`,
-        `Tags: ${note.tags.join(", ") || "none"}`,
-        `Summary: ${note.summary ?? "none"}`,
+        `Chunk ${index + 1}`,
+        `ID: ${block.id}`,
+        `Source: ${block.title}`,
+        `Tags: ${block.tags.join(", ") || "none"}`,
+        `Summary: ${block.summary ?? "none"}`,
         `Content: ${content}`,
       ].join("\n");
     })
     .join("\n\n---\n\n");
 }
 
-const systemPrompt =
-  "你是本站的知识库助手。主要根据提供的笔记回答，使用简洁的中文。若笔记不足以回答，请明确说明，不要编造。可综合多条笔记作答，避免机械摘抄。";
-
-function buildMessages(question: string, context: string) {
+function buildSystemPrompt(model: string) {
   return [
-    { role: "system" as const, content: systemPrompt },
+    "你是 Knowledge Studio 助手，底层模型为本地 Ollama 的 " + model + "。",
+    "核心目标：直接、完整地回答用户问题，使用简洁中文。",
+    "若提供了相关文档切片，优先引用并综合这些切片，不要编造切片中没有的「文档事实」。",
+    "若未提供切片、或切片与问题明显无关：请使用你自身的模型知识正常作答，禁止用「知识库没有」「未找到切片」「请查阅官方文档」一类话术拒绝回答。",
+    "只有用户明确在问「我上传的某份文档里写了什么」且确实没有对应切片时，才可说明知识库暂无该材料。",
+    "",
+    "必须严格按下面格式输出（不要省略标签，不要在标签外写额外内容）：",
+    "<thinking>",
+    "用简短条目写出推理过程。",
+    "</thinking>",
+    "<conclusion>",
+    "给出最终回答，直接回应用户问题。",
+    "</conclusion>",
+  ].join("\n");
+}
+
+function buildMessages(
+  question: string,
+  context: string,
+  model: string,
+  hasContext: boolean,
+) {
+  const contextSection = hasContext
+    ? ["相关文档切片（请优先参考）：", context].join("\n")
+    : [
+        "相关文档切片：无。",
+        "请基于你的模型知识直接完整回答，不要以缺少知识库材料为由拒绝。",
+      ].join("\n");
+
+  return [
+    { role: "system" as const, content: buildSystemPrompt(model) },
     {
       role: "user" as const,
-      content: [`问题：\n${question}`, "相关笔记：", context || "未找到相关笔记。"].join(
-        "\n\n",
-      ),
+      content: [`问题：\n${question}`, contextSection].join("\n\n"),
     },
   ];
 }
@@ -63,12 +88,13 @@ export async function answerQuestionWithNotes({
 }: AnswerQuestionArgs) {
   const client = getClient();
   const { model } = getLlmConfig();
+  const hasContext = contextBlocks.length > 0;
   const context = buildContext(contextBlocks);
 
   const response = await client.chat.completions.create({
     model,
     temperature: 0.2,
-    messages: buildMessages(question, context),
+    messages: buildMessages(question, context, model, hasContext),
   });
 
   return (
@@ -84,13 +110,14 @@ export async function* streamAnswerQuestionWithNotes({
 }: AnswerQuestionArgs & { temperature?: number }) {
   const client = getClient();
   const { model } = getLlmConfig();
+  const hasContext = contextBlocks.length > 0;
   const context = buildContext(contextBlocks);
 
   const stream = await client.chat.completions.create({
     model,
     temperature,
     stream: true,
-    messages: buildMessages(question, context),
+    messages: buildMessages(question, context, model, hasContext),
   });
 
   for await (const chunk of stream) {
@@ -106,14 +133,18 @@ export function getMockStreamAnswer(question: string) {
   const { model, baseURL } = getLlmConfig();
 
   return [
-    "（演示模式：未连上本地 Ollama）",
+    "<thinking>",
+    "当前处于演示模式，未连上本地 Ollama，无法基于文档切片做真实召回推理。",
+    `用户问题：「${question}」`,
+    "需要先确认模型服务可用，再重新提问。",
+    "</thinking>",
+    "<conclusion>",
+    "请先启动 Ollama 并拉取模型后再试：",
     "",
-    `问题：${question}`,
+    `\`\`\`bash\nollama serve\nollama pull ${model}\nollama pull nomic-embed-text\n\`\`\``,
     "",
-    `请确认 Ollama 已启动且已拉取模型：ollama pull ${model}`,
-    `默认地址：${baseURL}`,
-    "",
-    "启动命令示例：ollama serve",
+    `默认接口：${baseURL}`,
+    "</conclusion>",
   ].join("\n");
 }
 

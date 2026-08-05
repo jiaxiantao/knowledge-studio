@@ -22,7 +22,15 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
 }
 
 export function SiteHealthBadge() {
-  const { health, loading } = useHealthStatus();
+  const { health, loading, staticSite } = useHealthStatus();
+
+  if (staticSite) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-400">
+        静态预览
+      </span>
+    );
+  }
 
   if (loading) {
     return (
@@ -41,7 +49,7 @@ export function SiteHealthBadge() {
         ok={health.llm.configured}
         label={health.llm.configured ? "LLM" : "规则模式"}
       />
-      {health.search.pgTrgm ? <StatusDot ok label="pg_trgm" /> : null}
+      {health.search.vector ? <StatusDot ok label="vector" /> : null}
     </div>
   );
 }

@@ -14,6 +14,7 @@ export type StreamChatOptions = {
   signal?: AbortSignal;
   regenerate?: boolean;
   temperature?: number;
+  knowledgeBaseId?: string;
 };
 
 type StreamHandlers = {
@@ -82,6 +83,7 @@ export async function streamChatQuestion(
       stream: true,
       regenerate: options.regenerate,
       temperature: options.temperature,
+      knowledgeBaseId: options.knowledgeBaseId,
     }),
   });
 

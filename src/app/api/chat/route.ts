@@ -7,40 +7,56 @@ import {
   streamAnswerQuestionWithNotes,
   streamMockAnswer,
 } from "@/lib/ai-service";
-import {
-  buildAlternativePrompts,
-  computeConfidenceFromReferences,
-} from "@/lib/chat-confidence";
+import { computeConfidenceFromReferences } from "@/lib/chat-confidence";
 import { isLlmConfigured } from "@/lib/llm-config";
-import { searchNotes } from "@/lib/note-search";
+import { getMinRetrievalScore } from "@/lib/rag-config";
+import {
+  searchChunksByVector,
+  type RetrievedChunk,
+} from "@/lib/vector-search";
 
 const chatSchema = z.object({
   question: z.string().min(1, "Question is required"),
   stream: z.boolean().optional(),
   regenerate: z.boolean().optional(),
   temperature: z.number().min(0).max(1).optional(),
+  knowledgeBaseId: z.string().trim().min(1).optional(),
 });
 
-function mapReferences(
-  notes: Awaited<ReturnType<typeof searchNotes>>,
-) {
-  return notes.map((note) => ({
-    id: note.id,
-    title: note.title,
-    slug: note.slug,
-    summary: note.summary,
-    tags: note.tags,
-    score: note.score,
-    similarity: note.similarity,
+function mapReferences(chunks: RetrievedChunk[]) {
+  return chunks.map((chunk) => ({
+    id: chunk.id,
+    title: `${chunk.documentName} · #${chunk.index + 1}`,
+    slug: chunk.documentId,
+    summary: chunk.content.slice(0, 160),
+    tags: [] as string[],
+    score: chunk.score,
+    similarity: chunk.score,
   }));
+}
+
+function toContextBlocks(chunks: RetrievedChunk[]) {
+  return chunks.map((chunk) => ({
+    id: chunk.id,
+    title: chunk.documentName,
+    summary: `切片 #${chunk.index + 1}`,
+    contentMarkdown: chunk.content,
+    tags: [] as string[],
+  }));
+}
+
+function filterRelevantChunks(chunks: RetrievedChunk[]) {
+  const minScore = getMinRetrievalScore();
+  return chunks.filter((chunk) => chunk.score >= minScore);
 }
 
 function createSseStream(
   question: string,
-  matchedNotes: Awaited<ReturnType<typeof searchNotes>>,
+  matchedChunks: RetrievedChunk[],
   options: { temperature?: number; regenerate?: boolean } = {},
 ) {
   const encoder = new TextEncoder();
+  const relevantChunks = filterRelevantChunks(matchedChunks);
 
   return new ReadableStream({
     async start(controller) {
@@ -50,7 +66,7 @@ function createSseStream(
         );
       };
 
-      const references = mapReferences(matchedNotes);
+      const references = mapReferences(relevantChunks);
       send("references", { references });
 
       const { confidence, confidenceLabel } =
@@ -58,17 +74,11 @@ function createSseStream(
       send("meta", {
         confidence,
         confidenceLabel,
-        alternatives: buildAlternativePrompts(question, references),
+        alternatives: [] as string[],
       });
 
       try {
-        const contextBlocks = matchedNotes.map((note) => ({
-          id: note.id,
-          title: note.title,
-          summary: note.summary,
-          contentMarkdown: note.contentMarkdown,
-          tags: note.tags,
-        }));
+        const contextBlocks = toContextBlocks(relevantChunks);
 
         const useLlm = isLlmConfigured();
         const temperature =
@@ -116,31 +126,30 @@ function createSseStream(
 export async function POST(request: Request) {
   try {
     const body = chatSchema.parse(await request.json());
-    const matchedNotes = await searchNotes(body.question, 5);
+    const matchedChunks = await searchChunksByVector(
+      body.question,
+      5,
+      body.knowledgeBaseId ? [body.knowledgeBaseId] : undefined,
+    );
+    const relevantChunks = filterRelevantChunks(matchedChunks);
 
     if (body.stream) {
       return new Response(
-        createSseStream(body.question, matchedNotes, {
+        createSseStream(body.question, matchedChunks, {
           temperature: body.temperature,
           regenerate: body.regenerate,
         }),
         {
-        headers: {
-          "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+          },
         },
-      },
       );
     }
 
-    const contextBlocks = matchedNotes.map((note) => ({
-      id: note.id,
-      title: note.title,
-      summary: note.summary,
-      contentMarkdown: note.contentMarkdown,
-      tags: note.tags,
-    }));
+    const contextBlocks = toContextBlocks(relevantChunks);
 
     let answer: string;
     let mock = false;
@@ -163,7 +172,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       answer,
       mock,
-      references: mapReferences(matchedNotes),
+      references: mapReferences(relevantChunks),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -177,14 +186,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: error.message,
-          hint: "Set LLM_PROVIDER=ollama and run: ollama serve && ollama pull llama3.2",
+          hint: "Set LLM_PROVIDER=ollama and run: ollama serve && ollama pull qwen3 && ollama pull nomic-embed-text",
         },
         { status: 503 },
       );
     }
 
     return NextResponse.json(
-      { error: "Failed to generate answer" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to generate answer",
+      },
       { status: 500 },
     );
   }

@@ -11,7 +11,7 @@ export const metadata: Metadata = {
     template: "%s | Knowledge Studio",
   },
   description:
-    "PostgreSQL notes knowledge base with pg_trgm search and grounded AI assistant.",
+    "Local RAG knowledge console with document upload, pgvector retrieval, and grounded Q&A.",
 };
 
 export default function RootLayout({

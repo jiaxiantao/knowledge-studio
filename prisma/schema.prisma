@@ -6,17 +6,94 @@ datasource db {
   provider = "postgresql"
 }
 
-model Note {
-  id              String   @id @default(cuid())
-  title           String
-  slug            String   @unique
-  summary         String?
-  contentMarkdown String   @db.Text
-  tags            String[]
-  isPublished     Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+model KnowledgeBase {
+  id          String             @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  documents   Document[]
+  categories  DocumentCategory[]
+  chatSessions ChatSession[]
+}
 
-  @@index([isPublished])
+enum DocumentStatus {
+  pending
+  parsing
+  ready
+  failed
+}
+
+enum DocumentFormat {
+  md
+  txt
+  pdf
+}
+
+model DocumentCategory {
+  id              String        @id @default(cuid())
+  knowledgeBaseId String
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  name            String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([knowledgeBaseId, name])
+  @@index([knowledgeBaseId])
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  knowledgeBaseId String
+  knowledgeBase   KnowledgeBase  @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  name            String
+  format          DocumentFormat
+  sizeBytes       Int
+  status          DocumentStatus @default(pending)
+  /// 0–100 ingest progress while pending/parsing.
+  progress        Int            @default(0)
+  category        String         @default("默认类目")
+  errorMessage    String?
+  storageKey      String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  indexedAt       DateTime?
+  chunks          Chunk[]
+
+  @@index([knowledgeBaseId])
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model Chunk {
+  id            String                      @id @default(cuid())
+  documentId    String
+  document      Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  index         Int
+  title         String?
+  content       String                      @db.Text
+  tokenEstimate Int                         @default(0)
+  /// When false, chunk is excluded from vector retrieval.
+  enabled       Boolean                     @default(true)
+  /// Stored as pgvector; written/read via raw SQL.
+  embedding     Unsupported("vector(768)")?
+  createdAt     DateTime                    @default(now())
+
+  @@unique([documentId, index])
+  @@index([documentId])
+}
+
+/// Knowledge Q&A sessions. Branches + messages stored as JSON to match the client model.
+model ChatSession {
+  id              String         @id
+  knowledgeBaseId String?
+  knowledgeBase   KnowledgeBase? @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  title           String
+  activeBranchId  String
+  branches        Json
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([knowledgeBaseId])
   @@index([updatedAt])
 }

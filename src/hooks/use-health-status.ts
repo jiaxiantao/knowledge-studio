@@ -2,19 +2,26 @@
 
 import { useEffect, useState } from "react";
 
+import { isStaticSite } from "@/lib/site-mode";
+
 export type HealthStatus = {
   ok: boolean;
   ready: boolean;
   db: { connected: boolean; ok: boolean; latencyMs: number };
   llm: { configured: boolean; label: string };
-  search: { pgTrgm: boolean };
+  search: { vector: boolean };
 };
 
 export function useHealthStatus() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !isStaticSite());
+  const staticSite = isStaticSite();
 
   useEffect(() => {
+    if (staticSite) {
+      return;
+    }
+
     let cancelled = false;
 
     async function load() {
@@ -46,7 +53,7 @@ export function useHealthStatus() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [staticSite]);
 
-  return { health, loading };
+  return { health, loading, staticSite };
 }

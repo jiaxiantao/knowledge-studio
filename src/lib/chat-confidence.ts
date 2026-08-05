@@ -10,7 +10,7 @@ export function computeConfidenceFromReferences(
   references: ScoredReference[],
 ): Pick<ChatStreamMeta, "confidence" | "confidenceLabel"> {
   if (!references.length) {
-    return { confidence: 0.25, confidenceLabel: "低 · 未召回笔记" };
+    return { confidence: 0.25, confidenceLabel: "低 · 未召回切片" };
   }
 
   const scores = references.map((ref) => {
@@ -19,6 +19,10 @@ export function computeConfidenceFromReferences(
     }
 
     const raw = ref.score ?? 0;
+    // Vector search scores are already 0–1; legacy note scores were larger.
+    if (raw <= 1) {
+      return Math.min(1, Math.max(0, raw));
+    }
     return Math.min(1, raw / 12);
   });
 
@@ -26,7 +30,7 @@ export function computeConfidenceFromReferences(
   const confidence = Math.round(avg * 100) / 100;
 
   if (confidence >= 0.72) {
-    return { confidence, confidenceLabel: "高 · 笔记支撑充分" };
+    return { confidence, confidenceLabel: "高 · 切片支撑充分" };
   }
 
   if (confidence >= 0.45) {
