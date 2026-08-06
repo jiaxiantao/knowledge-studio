@@ -86,26 +86,29 @@ export function KnowledgeBaseMultiSelect({
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    void fetch("/api/knowledge-bases", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((payload: { knowledgeBases?: KnowledgeBaseRecord[] }) => {
-        if (!cancelled) {
-          setAllKnowledgeBases(payload.knowledgeBases ?? []);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAllKnowledgeBases([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void fetch("/api/knowledge-bases", { cache: "no-store" })
+        .then((response) => response.json())
+        .then((payload: { knowledgeBases?: KnowledgeBaseRecord[] }) => {
+          if (!cancelled) {
+            setAllKnowledgeBases(payload.knowledgeBases ?? []);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAllKnowledgeBases([]);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [staticSite]);
 

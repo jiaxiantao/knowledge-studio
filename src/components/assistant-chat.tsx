@@ -210,11 +210,14 @@ export function AssistantChat({
   const staticSite = isStaticSite();
 
   useEffect(() => {
-    if (!knowledgeBaseId) {
-      setSelectedKnowledgeBaseIds([]);
-      return;
-    }
-    setSelectedKnowledgeBaseIds(loadSelectedKnowledgeBaseIds(knowledgeBaseId));
+    const timer = window.setTimeout(() => {
+      if (!knowledgeBaseId) {
+        setSelectedKnowledgeBaseIds([]);
+        return;
+      }
+      setSelectedKnowledgeBaseIds(loadSelectedKnowledgeBaseIds(knowledgeBaseId));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [knowledgeBaseId]);
 
   useEffect(() => {
@@ -227,7 +230,10 @@ export function AssistantChat({
   useEffect(() => {
     if (staticSite || !knowledgeBaseId) {
       if (!knowledgeBaseId && !staticSite) {
-        setReady(true);
+        const timer = window.setTimeout(() => {
+          setReady(true);
+        }, 0);
+        return () => window.clearTimeout(timer);
       }
       return;
     }

@@ -52,7 +52,7 @@ export function buildFallbackSessionTitle(question: string) {
 }
 
 function normalizeTitle(raw: string, question: string) {
-  let title = raw
+  const title = raw
     .trim()
     .replace(/^["'「『【\[]+|["'」』】\]]+$/g, "")
     .replace(/^(标题[:：]\s*)/i, "")

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Knowledge Studio">
+  <defs>
+    <linearGradient id="ks-bg" x1="6" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#164e63"/>
+    </linearGradient>
+    <linearGradient id="ks-accent" x1="10" y1="8" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a5f3fc"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#ks-bg)"/>
+  <path
+    d="M9.5 8.5h9.2c.9 0 1.6.7 1.6 1.6v12.3c0 .5-.4.9-.9.9H10.4c-.9 0-1.6-.7-1.6-1.6V9.4c0-.5.4-.9.7-.9z"
+    fill="#e2e8f0"
+    opacity=".92"
+  />
+  <path
+    d="M11.2 7h9.2c.9 0 1.6.7 1.6 1.6v12.3c0 .5-.4.9-.9.9h-8.9c-.9 0-1.6-.7-1.6-1.6V7.9c0-.5.4-.9.6-.9z"
+    fill="#f8fafc"
+  />
+  <path d="M13 11.2h6.2M13 14h6.2M13 16.8h4.2" stroke="#64748b" stroke-width="1.2" stroke-linecap="round"/>
+  <circle cx="22.2" cy="21.8" r="4.2" fill="url(#ks-accent)"/>
+  <path
+    d="M20.8 21.8h2.8M22.2 20.4v2.8"
+    stroke="#0f172a"
+    stroke-width="1.4"
+    stroke-linecap="round"
+  />
+</svg>

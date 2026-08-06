@@ -277,7 +277,10 @@ export function KnowledgeBaseHub() {
   }, [staticSite]);
 
   useEffect(() => {
-    void loadKnowledgeBases();
+    const timer = window.setTimeout(() => {
+      void loadKnowledgeBases();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadKnowledgeBases]);
 
   const filtered = useMemo(() => {

@@ -100,7 +100,6 @@ function SliceToggle({
 
 export function DocumentChunksView({
   id,
-  knowledgeBaseId,
 }: {
   id: string;
   knowledgeBaseId?: string;

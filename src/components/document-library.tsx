@@ -218,7 +218,7 @@ export function DocumentLibrary({
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [documents, staticSite]);
+  }, [documents, knowledgeBaseId, staticSite]);
 
   async function confirmDelete() {
     if (staticSite || !pendingDelete) {

@@ -8,8 +8,16 @@ export function SiteHeader() {
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4 lg:px-8">
         <Link
           href="/knowledge"
-          className="text-sm font-semibold tracking-[0.24em] text-white transition hover:text-cyan-100"
+          className="flex items-center gap-2.5 text-sm font-semibold tracking-[0.24em] text-white transition hover:text-cyan-100"
         >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/knowledge-studio-icon.svg"
+            alt=""
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 rounded-lg"
+          />
           KNOWLEDGE STUDIO
         </Link>
         <div className="flex items-center gap-4">

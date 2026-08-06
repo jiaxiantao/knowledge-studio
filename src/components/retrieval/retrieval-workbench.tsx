@@ -270,11 +270,14 @@ export function RetrievalWorkbench({
   }, [staticSite]);
 
   useEffect(() => {
-    setSelectedIds((current) =>
-      current.includes(knowledgeBaseId)
-        ? current
-        : [knowledgeBaseId, ...current],
-    );
+    const timer = window.setTimeout(() => {
+      setSelectedIds((current) =>
+        current.includes(knowledgeBaseId)
+          ? current
+          : [knowledgeBaseId, ...current],
+      );
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [knowledgeBaseId]);
 
   const selectedKnowledgeBases = useMemo(
