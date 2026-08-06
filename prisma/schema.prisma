@@ -88,6 +88,11 @@ model Chunk {
   title         String?
   content       String                      @db.Text
   tokenEstimate Int                         @default(0)
+  /// leaf = flat chunk; parent = context unit; child = retrieval unit under parent.
+  level         ChunkLevel                  @default(leaf)
+  parentId      String?
+  parent        Chunk?                      @relation("ChunkHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children      Chunk[]                     @relation("ChunkHierarchy")
   /// When false, chunk is excluded from vector retrieval.
   enabled       Boolean                     @default(true)
   /// Stored as pgvector; written/read via raw SQL.
@@ -96,6 +101,14 @@ model Chunk {
 
   @@unique([documentId, index])
   @@index([documentId])
+  @@index([level])
+  @@index([parentId])
+}
+
+enum ChunkLevel {
+  leaf
+  parent
+  child
 }
 
 /// Knowledge Q&A sessions. Branches + messages stored as JSON to match the client model.

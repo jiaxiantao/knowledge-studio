@@ -14,6 +14,7 @@ import { publishDocumentProgress } from "@/lib/document-progress-events";
 import {
   CHUNK_CONTENT_MAX,
   CHUNK_TITLE_MAX,
+  type ChunkLevel,
   type ChunkRecord,
 } from "@/lib/chunk-types";
 import { getReadyDb } from "@/lib/db";
@@ -33,6 +34,14 @@ export { CHUNK_CONTENT_MAX, CHUNK_TITLE_MAX } from "@/lib/chunk-types";
 export { isDocumentIngestStuck } from "@/lib/document-status";
 
 const ingestInFlight = new Set<string>();
+
+const RETRIEVAL_CHUNK_LEVELS: ChunkLevel[] = ["leaf", "child"];
+
+const RETRIEVAL_CHUNK_COUNT = {
+  select: {
+    chunks: { where: { level: { in: RETRIEVAL_CHUNK_LEVELS } } },
+  },
+};
 
 export type DocumentRecord = {
   id: string;
@@ -102,7 +111,7 @@ export async function listDocuments(knowledgeBaseId?: string) {
   const docs = await db.document.findMany({
     where: knowledgeBaseId ? { knowledgeBaseId } : undefined,
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { chunks: true } } },
+    include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
 
   return docs.map(mapDocument);
@@ -120,7 +129,7 @@ export async function getDocument(id: string) {
 
   const doc = await db.document.findUnique({
     where: { id },
-    include: { _count: { select: { chunks: true } } },
+    include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
 
   return doc ? mapDocument(doc) : null;
@@ -144,6 +153,8 @@ function mapChunk(chunk: {
   content: string;
   tokenEstimate: number;
   enabled: boolean;
+  level?: ChunkLevel | null;
+  parentId?: string | null;
   createdAt: Date;
 }): ChunkRecord {
   return {
@@ -154,6 +165,8 @@ function mapChunk(chunk: {
     content: chunk.content,
     tokenEstimate: chunk.tokenEstimate,
     enabled: chunk.enabled,
+    level: chunk.level ?? "leaf",
+    parentId: chunk.parentId ?? null,
     createdAt: chunk.createdAt.toISOString(),
   };
 }
@@ -238,7 +251,10 @@ export async function listDocumentChunks(documentId: string) {
   }
 
   const chunks = await db.chunk.findMany({
-    where: { documentId },
+    where: {
+      documentId,
+      level: { in: RETRIEVAL_CHUNK_LEVELS },
+    },
     orderBy: { index: "asc" },
     select: {
       id: true,
@@ -248,6 +264,8 @@ export async function listDocumentChunks(documentId: string) {
       content: true,
       tokenEstimate: true,
       enabled: true,
+      level: true,
+      parentId: true,
       createdAt: true,
     },
   });
@@ -271,6 +289,8 @@ export async function getDocumentChunk(chunkId: string) {
       content: true,
       tokenEstimate: true,
       enabled: true,
+      level: true,
+      parentId: true,
       createdAt: true,
     },
   });
@@ -309,6 +329,7 @@ export async function createDocumentChunk(
       title,
       content,
       tokenEstimate: estimateTokens(content),
+      level: "leaf",
       enabled,
     },
   });
@@ -356,7 +377,7 @@ export async function updateDocumentChunk(
     },
   });
 
-  if (!enabled) {
+  if (!enabled || existing.level === "parent") {
     await clearChunkEmbedding(chunkId);
   } else if (contentChanged || !existing.enabled) {
     await writeChunkEmbedding(chunkId, content);
@@ -474,7 +495,7 @@ export async function createUploadedDocument(
       chunkConfig: chunkConfig as object,
       storageKey: saved.storageKey,
     },
-    include: { _count: { select: { chunks: true } } },
+    include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
 
   const mapped = mapDocument(document);
@@ -499,7 +520,7 @@ async function setDocumentProgress(
   const updated = await db.document.update({
     where: { id },
     data,
-    include: { _count: { select: { chunks: true } } },
+    include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
 
   if (updated) {
@@ -571,28 +592,43 @@ export async function processDocumentIngest(documentId: string) {
     await db.chunk.deleteMany({ where: { documentId } });
     await setDocumentProgress(documentId, { progress: 30 });
 
-    for (let index = 0; index < pieces.length; index += 1) {
-      const piece = pieces[index];
+    const idByIndex = new Map<number, string>();
+    const embeddable: Array<{ id: string; content: string }> = [];
+
+    for (const piece of pieces) {
+      const parentId =
+        piece.parentIndex != null
+          ? (idByIndex.get(piece.parentIndex) ?? null)
+          : null;
+
       const created = await db.chunk.create({
         data: {
           documentId,
           index: piece.index,
-          title: deriveChunkTitle(piece.content, CHUNK_TITLE_MAX) || null,
+          title:
+            piece.title?.slice(0, CHUNK_TITLE_MAX) ||
+            deriveChunkTitle(piece.content, CHUNK_TITLE_MAX) ||
+            null,
           content: piece.content,
           tokenEstimate: piece.tokenEstimate,
+          level: piece.level,
+          parentId,
           enabled: true,
         },
       });
 
-      const embedding = await embedText(piece.content);
-      const vector = toPgVectorLiteral(embedding);
-      await db.$executeRawUnsafe(
-        `UPDATE "Chunk" SET embedding = $1::vector WHERE id = $2`,
-        vector,
-        created.id,
-      );
+      idByIndex.set(piece.index, created.id);
 
-      const ratio = (index + 1) / pieces.length;
+      if (piece.level === "child" || piece.level === "leaf") {
+        embeddable.push({ id: created.id, content: piece.content });
+      }
+    }
+
+    for (let index = 0; index < embeddable.length; index += 1) {
+      const item = embeddable[index];
+      await writeChunkEmbedding(item.id, item.content);
+
+      const ratio = (index + 1) / embeddable.length;
       const progress = Math.min(96, Math.round(30 + ratio * 66));
       await setDocumentProgress(documentId, { progress });
     }
@@ -633,7 +669,7 @@ export async function queueDocumentReprocess(
 
   const existing = await db.document.findUnique({
     where: { id: documentId },
-    include: { _count: { select: { chunks: true } } },
+    include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
 
   if (!existing) {

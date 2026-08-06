@@ -85,7 +85,7 @@ export function ChunkIndexSettings({
       <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
         <label htmlFor={sliderId} className="text-sm font-medium text-white">
           <span className="mr-1 text-rose-300">*</span>
-          最大分段长度
+          最大分段长度（父切片）
         </label>
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <input
@@ -114,8 +114,34 @@ export function ChunkIndexSettings({
           />
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          范围 10–6000 字符，默认 {DEFAULT_CHUNK_CONFIG.maxChars}（对齐百炼索引设置）
+          范围 10–6000 字符，默认 {DEFAULT_CHUNK_CONFIG.maxChars}。开启父子切片时，子切片约为父切片的 40%（用于精确检索）。
         </p>
+      </div>
+
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/40 px-5 py-4">
+        <div>
+          <p className="text-sm font-medium text-white">父子切片（高精度检索）</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            小块检索、大块喂给模型（Parent-Child），推荐开启
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={value.parentChild}
+          onClick={() => onChange({ ...value, parentChild: !value.parentChild })}
+          className={cn(
+            "relative h-7 w-12 rounded-full transition",
+            value.parentChild ? "bg-cyan-300" : "bg-white/15",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white transition",
+              value.parentChild ? "translate-x-5" : "translate-x-0",
+            )}
+          />
+        </button>
       </div>
 
       {value.strategy === "regex" ? (

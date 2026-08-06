@@ -26,6 +26,9 @@ export type RetrievedChunk = {
   vectorScore?: number | null;
   keywordScore?: number | null;
   sources?: Array<"vector" | "keyword">;
+  /** When parent-child is used, the child id that matched. */
+  matchedChunkId?: string;
+  level?: "leaf" | "parent" | "child";
 };
 
 export type SearchChunksOptions = {
@@ -177,6 +180,7 @@ async function searchChunksByVectorInternal(
     INNER JOIN "KnowledgeBase" kb ON kb.id = d."knowledgeBaseId"
     WHERE c.embedding IS NOT NULL
       AND c.enabled = true
+      AND c.level IN ('leaf', 'child')
       AND d.status = 'ready'
       ${kb.sql}
     ORDER BY c.embedding <=> $1::vector
@@ -227,6 +231,7 @@ async function searchChunksByKeywordInternal(
     INNER JOIN "Document" d ON d.id = c."documentId"
     INNER JOIN "KnowledgeBase" kb ON kb.id = d."knowledgeBaseId"
     WHERE c.enabled = true
+      AND c.level IN ('leaf', 'child')
       AND d.status = 'ready'
       AND (
         c.content % $1
@@ -311,6 +316,68 @@ function mergeHybridChunks(
   };
 }
 
+/**
+ * Expand child hits to parent content for LLM context (Parent-Child RAG).
+ * Dedupes by parent id while keeping the best child score.
+ */
+async function expandChildHitsToParents(
+  db: PrismaClient,
+  hits: RetrievedChunk[],
+): Promise<RetrievedChunk[]> {
+  if (!hits.length) {
+    return hits;
+  }
+
+  const rows = await db.chunk.findMany({
+    where: { id: { in: hits.map((hit) => hit.id) } },
+    select: {
+      id: true,
+      level: true,
+      parentId: true,
+      parent: {
+        select: {
+          id: true,
+          index: true,
+          title: true,
+          content: true,
+        },
+      },
+    },
+  });
+
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const expanded: RetrievedChunk[] = [];
+  const seenParent = new Set<string>();
+
+  for (const hit of hits) {
+    const meta = byId.get(hit.id);
+    if (meta?.level === "child" && meta.parent) {
+      if (seenParent.has(meta.parent.id)) {
+        continue;
+      }
+      seenParent.add(meta.parent.id);
+      expanded.push({
+        ...hit,
+        id: meta.parent.id,
+        index: meta.parent.index,
+        title: meta.parent.title,
+        content: meta.parent.content,
+        matchedChunkId: hit.id,
+        level: "parent",
+      });
+      continue;
+    }
+
+    expanded.push({
+      ...hit,
+      matchedChunkId: hit.id,
+      level: meta?.level ?? "leaf",
+    });
+  }
+
+  return expanded;
+}
+
 export async function searchChunksByVector(
   query: string,
   topK = 5,
@@ -327,7 +394,13 @@ export async function searchChunksByVector(
   }
 
   const limit = Math.min(Math.max(topK, 1), 20);
-  return searchChunksByVectorInternal(db, trimmed, limit, knowledgeBaseIds);
+  const hits = await searchChunksByVectorInternal(
+    db,
+    trimmed,
+    limit,
+    knowledgeBaseIds,
+  );
+  return expandChildHitsToParents(db, hits);
 }
 
 /**
@@ -373,9 +446,10 @@ export async function searchChunks(
       candidateLimit,
       knowledgeBaseIds,
     );
-    const results = vectorHits
+    const filtered = vectorHits
       .filter((hit) => hit.score >= minScore)
       .slice(0, limit);
+    const results = await expandChildHitsToParents(db, filtered);
 
     return {
       results,
@@ -393,11 +467,20 @@ export async function searchChunks(
     searchChunksByKeywordInternal(db, trimmed, candidateLimit, knowledgeBaseIds),
   ]);
 
-  return mergeHybridChunks(
+  const merged = mergeHybridChunks(
     vectorHits,
     keywordHits,
     limit,
     minScore,
     keywordMinScore,
   );
+
+  const results = await expandChildHitsToParents(db, merged.results);
+  return {
+    results,
+    meta: {
+      ...merged.meta,
+      fusedCount: results.length,
+    },
+  };
 }

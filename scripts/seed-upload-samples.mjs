@@ -79,8 +79,9 @@ async function uploadFile(filePath, knowledgeBaseId) {
     "chunkConfig",
     JSON.stringify({
       strategy: "smart",
-      maxChars: 600,
-      overlap: 64,
+      maxChars: 800,
+      overlap: 80,
+      parentChild: true,
     }),
   );
 

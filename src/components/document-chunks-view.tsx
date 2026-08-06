@@ -384,6 +384,11 @@ export function DocumentChunksView({
                       {chunk.index + 1}
                     </span>
                     <span>{chunk.content.length} 字符</span>
+                    {chunk.level === "child" ? (
+                      <span className="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-1.5 py-0.5 text-cyan-100">
+                        子切片
+                      </span>
+                    ) : null}
                     {!chunk.enabled ? (
                       <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-1.5 py-0.5 text-amber-100">
                         已停用

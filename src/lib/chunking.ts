@@ -1,22 +1,32 @@
-import type { ChunkConfig } from "@/lib/chunk-config";
+import {
+  childMaxCharsFor,
+  type ChunkConfig,
+} from "@/lib/chunk-config";
+
+export type ChunkLevel = "leaf" | "parent" | "child";
 
 export type TextChunk = {
   index: number;
   content: string;
   tokenEstimate: number;
+  level: ChunkLevel;
+  /** Temporary link to parent chunk index within the same split result. */
+  parentIndex?: number;
+  title?: string;
 };
 
 export function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 1.5));
 }
 
-/** First meaningful line as a short title (max 50). */
 export function deriveChunkTitle(content: string, maxLength = 50) {
   const line =
     content
       .replace(/\r\n/g, "\n")
       .split("\n")
-      .map((part) => part.replace(/^#+\s*/, "").replace(/^【目录】\s*/, "").trim())
+      .map((part) =>
+        part.replace(/^#+\s*/, "").replace(/^【目录】\s*/, "").trim(),
+      )
       .find(Boolean) ?? "";
 
   if (!line) {
@@ -26,148 +36,237 @@ export function deriveChunkTitle(content: string, maxLength = 50) {
   return line.length > maxLength ? `${line.slice(0, maxLength - 1)}…` : line;
 }
 
-function toChunks(windows: string[]): TextChunk[] {
-  return windows
-    .filter(Boolean)
-    .map((content, index) => ({
-      index,
-      content,
-      tokenEstimate: estimateTokens(content),
-    }));
-}
+const DEFAULT_SEPARATORS = [
+  "\n## ",
+  "\n### ",
+  "\n#### ",
+  "\n# ",
+  "\n\n",
+  "\n",
+  "。",
+  "！",
+  "？",
+  "；",
+  ". ",
+  "! ",
+  "? ",
+  " ",
+  "",
+];
 
-function mergePartsToMaxChars(parts: string[], maxChars: number, overlap: number) {
-  const windows: string[] = [];
-  let buffer = "";
+const TITLE_FIRST_SEPARATORS = [
+  "\n## ",
+  "\n### ",
+  "\n#### ",
+  "\n# ",
+  "\n\n",
+  "\n",
+  "。",
+  " ",
+  "",
+];
 
-  const flush = () => {
-    const value = buffer.trim();
-    if (value) {
-      windows.push(value);
-    }
-    buffer = "";
+function toChunk(
+  content: string,
+  index: number,
+  level: ChunkLevel,
+  parentIndex?: number,
+): TextChunk {
+  const trimmed = content.trim();
+  return {
+    index,
+    content: trimmed,
+    tokenEstimate: estimateTokens(trimmed),
+    level,
+    parentIndex,
+    title: deriveChunkTitle(trimmed) || undefined,
   };
+}
 
-  for (const part of parts) {
-    const paragraph = part.trim();
-    if (!paragraph) {
-      continue;
-    }
+function splitKeepSeparator(text: string, separator: string): string[] {
+  if (!separator) {
+    const chars = Array.from(text);
+    return chars.length ? chars : [text];
+  }
 
-    if (paragraph.length > maxChars) {
-      flush();
-      for (let start = 0; start < paragraph.length; start += maxChars - overlap) {
-        windows.push(paragraph.slice(start, start + maxChars).trim());
+  if (!text.includes(separator)) {
+    return [text];
+  }
+
+  const parts = text.split(separator);
+  const out: string[] = [];
+  parts.forEach((part, index) => {
+    if (index === 0) {
+      if (part) {
+        out.push(part);
       }
-      continue;
+      return;
     }
+    out.push(`${separator}${part}`);
+  });
 
-    const candidate = buffer ? `${buffer}\n\n${paragraph}` : paragraph;
-    if (candidate.length > maxChars) {
-      flush();
-      buffer = paragraph;
-    } else {
-      buffer = candidate;
-    }
-  }
-
-  flush();
-  return windows;
+  return out.map((part) => part.trim()).filter(Boolean);
 }
 
-/**
- * Smart split: paragraph merge up to maxChars with overlap on long paragraphs.
- */
-export function splitIntoChunks(
-  text: string,
-  options: { maxChars?: number; overlap?: number } = {},
-): TextChunk[] {
-  const maxChars = options.maxChars ?? 600;
-  const overlap = options.overlap ?? 64;
-  const normalized = text.replace(/\r\n/g, "\n").trim();
-
+function slidingWindows(text: string, maxChars: number, overlap: number) {
+  const normalized = text.trim();
   if (!normalized) {
-    return [];
+    return [] as string[];
+  }
+  if (normalized.length <= maxChars) {
+    return [normalized];
   }
 
-  const paragraphs = normalized
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  return toChunks(mergePartsToMaxChars(paragraphs, maxChars, overlap));
-}
-
-function splitByLength(text: string, config: ChunkConfig): TextChunk[] {
-  const maxChars = config.maxChars;
-  const overlap = config.overlap;
-  const normalized = text.replace(/\r\n/g, "\n").trim();
-  if (!normalized) {
-    return [];
-  }
-
+  const step = Math.max(1, maxChars - overlap);
   const windows: string[] = [];
-  for (let start = 0; start < normalized.length; start += maxChars - overlap) {
+  for (let start = 0; start < normalized.length; start += step) {
     const slice = normalized.slice(start, start + maxChars).trim();
     if (slice) {
       windows.push(slice);
     }
+    if (start + maxChars >= normalized.length) {
+      break;
+    }
   }
-
-  return toChunks(windows);
+  return windows;
 }
 
-function splitByPage(text: string, config: ChunkConfig): TextChunk[] {
-  const pages = text
-    .split(/\n{2,}|(?=【第 \d+ 页】)/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+/**
+ * LangChain-style recursive character splitter with real inter-chunk overlap.
+ */
+function recursiveSplit(
+  text: string,
+  maxChars: number,
+  overlap: number,
+  separators: string[],
+): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.length <= maxChars) {
+    return [normalized];
+  }
 
-  const windows: string[] = [];
-  for (const page of pages) {
-    if (page.length <= config.maxChars) {
-      windows.push(page);
+  const [separator = "", ...rest] = separators;
+  let splits =
+    separator === ""
+      ? slidingWindows(normalized, maxChars, overlap)
+      : splitKeepSeparator(normalized, separator);
+
+  if (splits.length <= 1 && rest.length > 0) {
+    return recursiveSplit(normalized, maxChars, overlap, rest);
+  }
+  if (splits.length <= 1) {
+    return slidingWindows(normalized, maxChars, overlap);
+  }
+
+  // Recurse into oversized pieces with remaining separators.
+  const refined: string[] = [];
+  for (const piece of splits) {
+    if (piece.length <= maxChars) {
+      refined.push(piece);
+    } else if (rest.length > 0) {
+      refined.push(...recursiveSplit(piece, maxChars, overlap, rest));
+    } else {
+      refined.push(...slidingWindows(piece, maxChars, overlap));
+    }
+  }
+
+  // Merge small pieces into ≤ maxChars windows; carry overlap into next window.
+  const merged: string[] = [];
+  let current = "";
+
+  const pushCurrent = () => {
+    const value = current.trim();
+    if (!value) {
+      current = "";
+      return;
+    }
+    merged.push(value);
+    if (overlap > 0 && value.length > overlap) {
+      current = value.slice(Math.max(0, value.length - overlap));
+    } else {
+      current = "";
+    }
+  };
+
+  for (const piece of refined) {
+    const part = piece.trim();
+    if (!part) {
       continue;
     }
-    windows.push(
-      ...mergePartsToMaxChars([page], config.maxChars, config.overlap),
-    );
+
+    if (!current) {
+      current = part;
+      if (current.length >= maxChars) {
+        if (current.length > maxChars) {
+          const windows = slidingWindows(current, maxChars, overlap);
+          merged.push(...windows.slice(0, -1));
+          current = windows[windows.length - 1] ?? "";
+          if (current.length > maxChars) {
+            pushCurrent();
+          }
+        } else {
+          pushCurrent();
+        }
+      }
+      continue;
+    }
+
+    const joiner = current.endsWith("\n") || part.startsWith("\n") ? "" : "\n";
+    const candidate = `${current}${joiner}${part}`;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    pushCurrent();
+    // After overlap tail, append the new part.
+    if (!current) {
+      current = part;
+    } else {
+      const joiner2 = current.endsWith("\n") || part.startsWith("\n") ? "" : "\n";
+      current = `${current}${joiner2}${part}`;
+    }
+
+    if (current.length > maxChars) {
+      const windows = slidingWindows(current, maxChars, overlap);
+      merged.push(...windows.slice(0, -1));
+      current = windows[windows.length - 1] ?? "";
+      if (current.length >= maxChars) {
+        pushCurrent();
+      }
+    }
   }
 
-  return toChunks(windows);
+  const last = current.trim();
+  if (last) {
+    const prev = merged[merged.length - 1];
+    if (prev !== last) {
+      merged.push(last);
+    }
+  }
+
+  return merged;
 }
 
-const TITLE_SPLIT =
-  /(?=^#{1,6}\s|^(?:第[一二三四五六七八九十百千\d]+[章节篇部])|^\d+(?:\.\d+)+\s+)/m;
+function splitByPageBlocks(text: string): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
 
-function splitByTitle(text: string, config: ChunkConfig): TextChunk[] {
-  const sections = text
-    .split(TITLE_SPLIT)
+  const byMarker = normalized
+    .split(/(?=【第\s*\d+\s*页】)/)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  return toChunks(
-    mergePartsToMaxChars(sections, config.maxChars, config.overlap),
-  );
-}
-
-function splitByRegex(text: string, config: ChunkConfig): TextChunk[] {
-  const pattern = config.regex?.trim();
-  if (!pattern) {
-    return splitIntoChunks(text, config);
+  if (byMarker.length > 1) {
+    return byMarker;
   }
 
-  try {
-    const parts = text
-      .split(new RegExp(pattern, "gm"))
-      .map((part) => part.trim())
-      .filter(Boolean);
-    return toChunks(
-      mergePartsToMaxChars(parts, config.maxChars, config.overlap),
-    );
-  } catch {
-    return splitIntoChunks(text, config);
-  }
+  return [normalized];
 }
 
 function decodeSymbolPattern(symbol?: string) {
@@ -177,35 +276,134 @@ function decodeSymbolPattern(symbol?: string) {
   return symbol.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
 }
 
-function splitBySymbol(text: string, config: ChunkConfig): TextChunk[] {
-  const separator = decodeSymbolPattern(config.symbol);
-  const parts = text
-    .split(separator)
-    .map((part) => part.trim())
-    .filter(Boolean);
+function strategySeparators(config: ChunkConfig): string[] {
+  switch (config.strategy) {
+    case "title":
+      return TITLE_FIRST_SEPARATORS;
+    case "page":
+      return ["\n\n", "\n", "。", " ", ""];
+    case "symbol":
+      return [decodeSymbolPattern(config.symbol), "\n\n", "\n", "。", " ", ""];
+    case "length":
+      return [""];
+    case "regex":
+    case "smart":
+    default:
+      return DEFAULT_SEPARATORS;
+  }
+}
 
-  return toChunks(
-    mergePartsToMaxChars(parts, config.maxChars, config.overlap),
-  );
+function initialBlocks(text: string, config: ChunkConfig): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return [];
+  }
+
+  if (config.strategy === "page") {
+    return splitByPageBlocks(normalized);
+  }
+
+  if (config.strategy === "regex" && config.regex?.trim()) {
+    try {
+      const parts = normalized
+        .split(new RegExp(config.regex, "gm"))
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return parts.length ? parts : [normalized];
+    } catch {
+      return [normalized];
+    }
+  }
+
+  if (config.strategy === "symbol") {
+    const sep = decodeSymbolPattern(config.symbol);
+    const parts = normalized
+      .split(sep)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return parts.length ? parts : [normalized];
+  }
+
+  if (config.strategy === "title") {
+    const titleSplit =
+      /(?=^#{1,6}\s|^(?:第[一二三四五六七八九十百千\d]+[章节篇部])|^\d+(?:\.\d+)+\s+)/m;
+    const sections = normalized
+      .split(titleSplit)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return sections.length ? sections : [normalized];
+  }
+
+  return [normalized];
 }
 
 export function splitTextByConfig(text: string, config: ChunkConfig): TextChunk[] {
-  switch (config.strategy) {
-    case "length":
-      return splitByLength(text, config);
-    case "page":
-      return splitByPage(text, config);
-    case "title":
-      return splitByTitle(text, config);
-    case "regex":
-      return splitByRegex(text, config);
-    case "symbol":
-      return splitBySymbol(text, config);
-    case "smart":
-    default:
-      return splitIntoChunks(text, {
-        maxChars: config.maxChars,
-        overlap: config.overlap,
-      });
+  const maxChars = config.maxChars;
+  const overlap = Math.min(config.overlap, Math.floor(maxChars / 2));
+  const separators = strategySeparators(config);
+  const blocks = initialBlocks(text, config);
+  if (!blocks.length) {
+    return [];
   }
+
+  const parentWindows: string[] = [];
+  if (config.strategy === "length") {
+    parentWindows.push(
+      ...slidingWindows(text.replace(/\r\n/g, "\n").trim(), maxChars, overlap),
+    );
+  } else {
+    for (const block of blocks) {
+      parentWindows.push(
+        ...recursiveSplit(block, maxChars, overlap, separators),
+      );
+    }
+  }
+
+  if (!parentWindows.length) {
+    return [];
+  }
+
+  if (!config.parentChild) {
+    return parentWindows.map((content, index) =>
+      toChunk(content, index, "leaf"),
+    );
+  }
+
+  const childMax = childMaxCharsFor(maxChars);
+  const childOverlap = Math.min(
+    overlap,
+    Math.max(16, Math.floor(childMax * 0.1)),
+  );
+  const result: TextChunk[] = [];
+  let nextIndex = 0;
+
+  for (const parentContent of parentWindows) {
+    const parentIndex = nextIndex;
+    result.push(toChunk(parentContent, parentIndex, "parent"));
+    nextIndex += 1;
+
+    const children =
+      parentContent.length <= childMax
+        ? [parentContent]
+        : recursiveSplit(parentContent, childMax, childOverlap, separators);
+
+    for (const childContent of children) {
+      result.push(toChunk(childContent, nextIndex, "child", parentIndex));
+      nextIndex += 1;
+    }
+  }
+
+  return result;
+}
+
+export function splitIntoChunks(
+  text: string,
+  options: { maxChars?: number; overlap?: number } = {},
+): TextChunk[] {
+  return splitTextByConfig(text, {
+    strategy: "smart",
+    maxChars: options.maxChars ?? 800,
+    overlap: options.overlap ?? 80,
+    parentChild: false,
+  });
 }
