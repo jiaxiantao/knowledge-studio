@@ -2,12 +2,14 @@ import { after, NextResponse } from "next/server";
 
 import {
   createUploadedDocument,
-  formatMaxUploadSize,
   listDocuments,
   processDocumentIngest,
 } from "@/lib/documents-service";
 import { getKnowledgeBase } from "@/lib/knowledge-bases-service";
-import { getMaxUploadBytes } from "@/lib/rag-config";
+import { validateUploadBasics } from "@/lib/upload-rules";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   try {
@@ -50,12 +52,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "缺少上传文件" }, { status: 400 });
     }
 
-    const maxBytes = getMaxUploadBytes();
-    if (file.size > maxBytes) {
-      return NextResponse.json(
-        { error: `文件大小不能超过 ${formatMaxUploadSize()}` },
-        { status: 400 },
-      );
+    const basics = validateUploadBasics(file.name, file.size);
+    if (!basics.ok) {
+      return NextResponse.json({ error: basics.error }, { status: 400 });
     }
 
     const document = await createUploadedDocument(

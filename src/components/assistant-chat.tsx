@@ -12,8 +12,9 @@ import { ConsoleSubpageLayout } from "@/components/console-page-top-bar";
 import { StaticSiteNotice } from "@/components/static-site-notice";
 import { showToast } from "@/components/ui/toast";
 import { streamChatQuestion, type ChatReference } from "@/lib/chat-stream";
-import type { ChatMessage, ChatSession } from "@/lib/chat-types";
+import type { ChatHistoryTurn, ChatMessage, ChatSession } from "@/lib/chat-types";
 import { loadChatSessionBootstrap } from "@/lib/chat-session-bootstrap";
+import { parseAssistantAnswer } from "@/lib/assistant-answer";
 import {
   createChatSessionRemote,
   deleteChatSessionRemote,
@@ -81,6 +82,35 @@ function latestCompletedPair(messages: ChatMessage[]) {
   }
 
   return null;
+}
+
+function buildChatHistory(messages: ChatMessage[]): ChatHistoryTurn[] {
+  return messages
+    .filter((message) => {
+      if (message.role === "user") {
+        return Boolean(message.content.trim());
+      }
+      return (
+        message.role === "assistant" &&
+        message.status !== "streaming" &&
+        message.status !== "error" &&
+        Boolean(message.content.trim())
+      );
+    })
+    .slice(-6)
+    .map((message) => {
+      if (message.role === "assistant") {
+        const parsed = parseAssistantAnswer(message.content);
+        return {
+          role: "assistant" as const,
+          content: parsed.conclusion || message.content,
+        };
+      }
+      return {
+        role: "user" as const,
+        content: message.content,
+      };
+    });
 }
 
 export function AssistantChat({
@@ -381,6 +411,28 @@ export function AssistantChat({
       const controller = new AbortController();
       abortRef.current = controller;
 
+      const active = sessionsRef.current.find(
+        (session) => session.id === activeSessionId,
+      );
+      let priorMessages = active ? getActiveBranch(active).messages : [];
+      if (options.replaceLastAssistant) {
+        const lastAssistantIndex = findLastIndex(
+          priorMessages,
+          (message) => message.role === "assistant",
+        );
+        if (lastAssistantIndex >= 0) {
+          priorMessages = priorMessages.slice(0, lastAssistantIndex);
+        }
+      }
+      // Drop the trailing user turn that matches this question — it is the current ask.
+      if (
+        priorMessages.at(-1)?.role === "user" &&
+        priorMessages.at(-1)?.content.trim() === question.trim()
+      ) {
+        priorMessages = priorMessages.slice(0, -1);
+      }
+      const history = buildChatHistory(priorMessages);
+
       const assistantMessage = createMessage("assistant", "", {
         status: "streaming",
       });
@@ -406,6 +458,7 @@ export function AssistantChat({
       let streamed = "";
       let latestReferences: ChatReference[] = [];
       let metaConfidence: number | undefined;
+      let metaConfidenceLabel: string | undefined;
 
       try {
         await streamChatQuestion(
@@ -425,6 +478,20 @@ export function AssistantChat({
             },
             onMeta: (meta) => {
               metaConfidence = meta.confidence;
+              metaConfidenceLabel = meta.confidenceLabel;
+              patchActiveBranch(
+                (current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? {
+                          ...message,
+                          confidence: meta.confidence,
+                          confidenceLabel: meta.confidenceLabel,
+                        }
+                      : message,
+                  ),
+                { persist: false },
+              );
             },
             onChunk: (text) => {
               streamed += text;
@@ -447,6 +514,7 @@ export function AssistantChat({
             regenerate: options.regenerate,
             temperature: options.regenerate ? 0.55 : undefined,
             knowledgeBaseId,
+            history,
           },
         );
 
@@ -464,6 +532,7 @@ export function AssistantChat({
                     content: streamed || "（已停止或无内容返回）",
                     status: completed ? "complete" : "stopped",
                     confidence: metaConfidence,
+                    confidenceLabel: metaConfidenceLabel,
                     references: latestReferences,
                     alternatives: undefined,
                   }
@@ -486,6 +555,7 @@ export function AssistantChat({
                       content: streamed || "（生成已停止）",
                       status: "stopped",
                       confidence: metaConfidence,
+                      confidenceLabel: metaConfidenceLabel,
                       references: latestReferences,
                     }
                   : message,
@@ -519,7 +589,12 @@ export function AssistantChat({
         abortRef.current = null;
       }
     },
-    [attachSuggestions, knowledgeBaseId, patchActiveBranch],
+    [
+      activeSessionId,
+      attachSuggestions,
+      knowledgeBaseId,
+      patchActiveBranch,
+    ],
   );
 
   const submitUserMessage = useCallback(

@@ -185,8 +185,7 @@ function KnowledgeBaseCard({
             <h3 className="truncate text-base font-semibold text-white group-hover:text-cyan-50">
               {knowledgeBase.name}
             </h3>
-            <p className="mt-3 text-sm text-slate-500">
-              <span className="text-slate-400">描述</span>{" "}
+            <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-500">
               {knowledgeBase.description?.trim() || knowledgeBase.name}
             </p>
             <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">

@@ -14,7 +14,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { StaticSiteNotice } from "@/components/static-site-notice";
-import { DarkSelect } from "@/components/ui/dark-select";
 import {
   Dialog,
   DialogContent,
@@ -26,8 +25,6 @@ import { showToast } from "@/components/ui/toast";
 import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
 
-import { cn } from "@/lib/utils";
-
 type RetrievalHit = {
   id: string;
   documentId: string;
@@ -38,6 +35,17 @@ type RetrievalHit = {
   title: string | null;
   content: string;
   score: number;
+};
+
+type RetrievalMeta = {
+  latencyMs: number;
+  topK: number;
+  minScore: number;
+  embedModel: string;
+  mode: string;
+  rawCount: number;
+  hitCount: number;
+  knowledgeBaseCount: number;
 };
 
 const QUERY_MAX = 1500;
@@ -70,35 +78,6 @@ function SettingRow({
   );
 }
 
-function Toggle({
-  checked,
-  disabled,
-  onChange,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? "bg-cyan-400/80" : "bg-white/10"
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition ${
-          checked ? "translate-x-5" : "translate-x-0"
-        }`}
-      />
-    </button>
-  );
-}
-
 function SelectedKnowledgeBaseCard({
   knowledgeBase,
   onRemove,
@@ -125,20 +104,15 @@ function SelectedKnowledgeBaseCard({
                 {knowledgeBase.documentCount} 篇
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <span className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-slate-400">
-                权重 1
-              </span>
-              <button
-                type="button"
-                disabled={!canRemove}
-                onClick={onRemove}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-30"
-                aria-label="移除知识库"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={!canRemove}
+              onClick={onRemove}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="移除知识库"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
           </div>
           <p className="mt-2 truncate text-[11px] text-slate-600">
             {knowledgeBase.description?.trim() || "本地向量召回"}
@@ -270,11 +244,11 @@ export function RetrievalWorkbench({
 }) {
   const [query, setQuery] = useState("");
   const [topK, setTopK] = useState(5);
-  const [routingEnabled, setRoutingEnabled] = useState(false);
-  const [retrievalMode, setRetrievalMode] = useState("vector");
+  const [minScore, setMinScore] = useState(0.42);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<RetrievalHit[]>([]);
+  const [meta, setMeta] = useState<RetrievalMeta | null>(null);
   const [allKnowledgeBases, setAllKnowledgeBases] = useState<
     KnowledgeBaseRecord[]
   >([]);
@@ -374,19 +348,23 @@ export function RetrievalWorkbench({
         body: JSON.stringify({
           query: trimmed,
           topK,
+          minScore,
           knowledgeBaseIds: selectedIds,
         }),
       });
       const payload = (await response.json()) as {
         results?: RetrievalHit[];
+        meta?: RetrievalMeta;
         error?: string;
       };
       if (!response.ok) {
         throw new Error(payload.error ?? "检索失败");
       }
       setResults(payload.results ?? []);
+      setMeta(payload.meta ?? null);
     } catch (retrievalError) {
       setResults([]);
+      setMeta(null);
       setError(
         retrievalError instanceof Error
           ? retrievalError.message
@@ -439,34 +417,15 @@ export function RetrievalWorkbench({
         </div>
 
         <div className="overflow-y-auto px-5 py-2 [scrollbar-gutter:stable_both-edges]">
-          <SettingRow label="知识库路由" hint="多知识库时按意图自动选择（即将支持）">
-            <Toggle
-              checked={routingEnabled}
-              disabled
-              onChange={setRoutingEnabled}
-            />
+          <SettingRow label="检索模式" hint="当前仅支持向量召回">
+            <span className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-1.5 text-sm text-slate-300">
+              向量召回
+            </span>
           </SettingRow>
-          <SettingRow label="向量模型" hint="当前用于召回的 embedding 模型">
-            <DarkSelect
-              value="nomic-embed-text"
-              disabled
-              onChange={() => undefined}
-              options={[
-                { value: "nomic-embed-text", label: "nomic-embed-text" },
-              ]}
-              className="w-44"
-            />
-          </SettingRow>
-          <SettingRow label="检索模式">
-            <DarkSelect
-              value={retrievalMode}
-              onChange={setRetrievalMode}
-              options={[
-                { value: "vector", label: "向量召回" },
-                { value: "qa", label: "问答模式" },
-              ]}
-              className="w-44"
-            />
+          <SettingRow label="向量模型" hint="由 OLLAMA_EMBED_MODEL 配置">
+            <span className="max-w-44 truncate rounded-lg border border-white/10 bg-slate-950/70 px-3 py-1.5 text-sm text-slate-300">
+              {meta?.embedModel ?? "nomic-embed-text"}
+            </span>
           </SettingRow>
           <SettingRow label="最大召回数量 1 ~ 20">
             <input
@@ -486,6 +445,28 @@ export function RetrievalWorkbench({
               className="w-16 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1.5 text-center text-sm text-white outline-none focus:border-cyan-300/40 disabled:opacity-50"
             />
           </SettingRow>
+          <SettingRow
+            label="最低相似度"
+            hint="低于该分数的召回结果将被过滤"
+          >
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              value={minScore}
+              disabled={staticSite}
+              onChange={(event) =>
+                setMinScore(
+                  Math.min(
+                    1,
+                    Math.max(0, Number(event.target.value) || 0),
+                  ),
+                )
+              }
+              className="w-20 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1.5 text-center text-sm text-white outline-none focus:border-cyan-300/40 disabled:opacity-50"
+            />
+          </SettingRow>
         </div>
       </aside>
 
@@ -503,6 +484,41 @@ export function RetrievalWorkbench({
             </div>
           ) : null}
 
+          {meta ? (
+            <div className="mx-auto mb-4 flex max-w-4xl flex-wrap gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-xs text-slate-400">
+              <span>
+                耗时{" "}
+                <strong className="font-mono text-slate-200">
+                  {meta.latencyMs} ms
+                </strong>
+              </span>
+              <span>
+                命中{" "}
+                <strong className="font-mono text-slate-200">
+                  {meta.hitCount}
+                </strong>
+                <span className="text-slate-600"> / raw {meta.rawCount}</span>
+              </span>
+              <span>
+                topK{" "}
+                <strong className="font-mono text-slate-200">{meta.topK}</strong>
+              </span>
+              <span>
+                minScore{" "}
+                <strong className="font-mono text-slate-200">
+                  {meta.minScore.toFixed(2)}
+                </strong>
+              </span>
+              <span>
+                知识库{" "}
+                <strong className="font-mono text-slate-200">
+                  {meta.knowledgeBaseCount}
+                </strong>
+              </span>
+              <span className="text-slate-500">{meta.embedModel}</span>
+            </div>
+          ) : null}
+
           {results.length ? (
             <div className="mx-auto grid max-w-4xl gap-4">
               {results.map((hit, index) => (
@@ -513,6 +529,15 @@ export function RetrievalWorkbench({
                   showKnowledgeBase={selectedIds.length > 1}
                 />
               ))}
+            </div>
+          ) : meta && !loading ? (
+            <div className="flex h-full min-h-72 items-center justify-center">
+              <div className="max-w-md text-center">
+                <p className="text-sm text-slate-400">没有通过阈值的召回结果</p>
+                <p className="mt-2 text-xs leading-6 text-slate-600">
+                  原始召回 {meta.rawCount} 条，可降低最低相似度或检查文档是否已索引。
+                </p>
+              </div>
             </div>
           ) : (
             <div className="flex h-full min-h-72 items-center justify-center">
@@ -547,7 +572,7 @@ export function RetrievalWorkbench({
               />
               <div className="mt-2 flex items-end justify-between gap-3 px-2">
                 <span className="text-xs text-slate-600">
-                  {query.length}/{QUERY_MAX}
+                  {loading ? "检索中…" : `${query.length}/${QUERY_MAX}`}
                 </span>
                 <button
                   type="submit"

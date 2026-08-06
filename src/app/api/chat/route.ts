@@ -7,7 +7,9 @@ import {
   streamAnswerQuestionWithNotes,
   streamMockAnswer,
 } from "@/lib/ai-service";
+import { parseAssistantAnswer } from "@/lib/assistant-answer";
 import { computeConfidenceFromReferences } from "@/lib/chat-confidence";
+import type { ChatHistoryTurn } from "@/lib/chat-types";
 import { isLlmConfigured } from "@/lib/llm-config";
 import { getMinRetrievalScore } from "@/lib/rag-config";
 import {
@@ -15,12 +17,18 @@ import {
   type RetrievedChunk,
 } from "@/lib/vector-search";
 
+const historyTurnSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().trim().min(1).max(8000),
+});
+
 const chatSchema = z.object({
   question: z.string().min(1, "Question is required"),
   stream: z.boolean().optional(),
   regenerate: z.boolean().optional(),
   temperature: z.number().min(0).max(1).optional(),
   knowledgeBaseId: z.string().trim().min(1).optional(),
+  history: z.array(historyTurnSchema).max(12).optional(),
 });
 
 function mapReferences(chunks: RetrievedChunk[]) {
@@ -29,6 +37,7 @@ function mapReferences(chunks: RetrievedChunk[]) {
     title: `${chunk.documentName} · #${chunk.index + 1}`,
     slug: chunk.documentId,
     summary: chunk.content.slice(0, 160),
+    knowledgeBaseId: chunk.knowledgeBaseId,
     tags: [] as string[],
     score: chunk.score,
     similarity: chunk.score,
@@ -50,13 +59,38 @@ function filterRelevantChunks(chunks: RetrievedChunk[]) {
   return chunks.filter((chunk) => chunk.score >= minScore);
 }
 
+function sanitizeHistory(
+  history: ChatHistoryTurn[] | undefined,
+): ChatHistoryTurn[] {
+  if (!history?.length) {
+    return [];
+  }
+
+  return history.map((turn) => {
+    if (turn.role !== "assistant") {
+      return turn;
+    }
+    const parsed = parseAssistantAnswer(turn.content);
+    return {
+      role: "assistant",
+      content: parsed.conclusion || turn.content,
+    };
+  });
+}
+
 function createSseStream(
   question: string,
   matchedChunks: RetrievedChunk[],
-  options: { temperature?: number; regenerate?: boolean } = {},
+  options: {
+    temperature?: number;
+    regenerate?: boolean;
+    history?: ChatHistoryTurn[];
+    searchMs?: number;
+  } = {},
 ) {
   const encoder = new TextEncoder();
   const relevantChunks = filterRelevantChunks(matchedChunks);
+  const minScore = getMinRetrievalScore();
 
   return new ReadableStream({
     async start(controller) {
@@ -75,10 +109,14 @@ function createSseStream(
         confidence,
         confidenceLabel,
         alternatives: [] as string[],
+        searchMs: options.searchMs,
+        minScore,
+        hitCount: relevantChunks.length,
       });
 
       try {
         const contextBlocks = toContextBlocks(relevantChunks);
+        const history = sanitizeHistory(options.history);
 
         const useLlm = isLlmConfigured();
         const temperature =
@@ -89,6 +127,7 @@ function createSseStream(
           ? streamAnswerQuestionWithNotes({
               question,
               contextBlocks,
+              history,
               temperature,
             })
           : streamMockAnswer(getMockStreamAnswer(question));
@@ -126,18 +165,23 @@ function createSseStream(
 export async function POST(request: Request) {
   try {
     const body = chatSchema.parse(await request.json());
+    const searchStarted = Date.now();
     const matchedChunks = await searchChunksByVector(
       body.question,
       5,
       body.knowledgeBaseId ? [body.knowledgeBaseId] : undefined,
     );
+    const searchMs = Date.now() - searchStarted;
     const relevantChunks = filterRelevantChunks(matchedChunks);
+    const history = sanitizeHistory(body.history);
 
     if (body.stream) {
       return new Response(
         createSseStream(body.question, matchedChunks, {
           temperature: body.temperature,
           regenerate: body.regenerate,
+          history,
+          searchMs,
         }),
         {
           headers: {
@@ -159,6 +203,7 @@ export async function POST(request: Request) {
         answer = await answerQuestionWithNotes({
           question: body.question,
           contextBlocks,
+          history,
         });
       } catch {
         answer = getMockStreamAnswer(body.question);
@@ -173,6 +218,11 @@ export async function POST(request: Request) {
       answer,
       mock,
       references: mapReferences(relevantChunks),
+      meta: {
+        searchMs,
+        minScore: getMinRetrievalScore(),
+        hitCount: relevantChunks.length,
+      },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

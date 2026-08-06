@@ -9,14 +9,17 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { StaticSiteNotice } from "@/components/static-site-notice";
 import { DarkSelect } from "@/components/ui/dark-select";
 import { isStaticSite } from "@/lib/site-mode";
+import {
+  MAX_UPLOAD_FILES,
+  acceptAttribute,
+  validateUploadBasics,
+} from "@/lib/upload-rules";
 
-const ACCEPTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf"] as const;
-const MAX_FILES = 20;
 const DEFAULT_CATEGORY = "默认类目";
 
 type PendingFile = {
@@ -36,9 +39,57 @@ function formatBytes(size: number) {
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function isAcceptedFile(file: File) {
-  const name = file.name.toLowerCase();
-  return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+function fileStatusLabel(item: PendingFile) {
+  if (item.status === "uploading") {
+    return "上传解析中…";
+  }
+  if (item.status === "done") {
+    return "已提交";
+  }
+  if (item.status === "error") {
+    return item.error ?? "上传失败";
+  }
+  return "待上传";
+}
+
+function FormatRequirementsHint({ fileCount }: { fileCount: number }) {
+  return (
+    <span
+      className="group relative inline-flex"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="text-[#3b82f6] hover:text-[#60a5fa]"
+        aria-describedby="upload-format-requirements"
+      >
+        查看格式要求
+      </button>
+      <span
+        id="upload-format-requirements"
+        role="tooltip"
+        className="pointer-events-none invisible absolute bottom-full left-1/2 z-30 mb-2 w-[26rem] -translate-x-1/2 rounded-lg bg-slate-900 px-3.5 py-3 text-left text-[12px] leading-5 text-white opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.45)] transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+      >
+        <span className="block">
+          单文档：大小≤150MB或1000页，格式支持.doc,.docx,.ppt,.pptx,.pdf
+        </span>
+        <span className="mt-1.5 block">
+          表格：建议10MB以内，10万行以内，格式支持xls、xlsx
+        </span>
+        <span className="mt-1.5 block">
+          单图片：大小≤20MB，最短边 &gt; 15px，长边 &lt; 8192px，长宽比 &lt;
+          50，格式支持.png,.jpg,.jpeg,.bmp,.gif等
+        </span>
+        <span className="mt-1.5 block">
+          纯文本：建议不要超过10MB，格式支持.md,.txt,.html
+        </span>
+        <span className="mt-1.5 block">
+          最多支持 ({fileCount} / {MAX_UPLOAD_FILES}) 个
+        </span>
+      </span>
+    </span>
+  );
 }
 
 export function DocumentUploadForm({
@@ -105,11 +156,6 @@ export function DocumentUploadForm({
     return () => window.clearTimeout(timer);
   }, [loadCategories]);
 
-  const acceptedHint = useMemo(
-    () => ACCEPTED_EXTENSIONS.join(" / "),
-    [],
-  );
-
   function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) {
       return;
@@ -121,19 +167,25 @@ export function DocumentUploadForm({
     setFiles((current) => {
       const next = [...current];
       for (const file of incoming) {
-        if (next.length >= MAX_FILES) {
-          setError(`一次最多上传 ${MAX_FILES} 个文件`);
+        if (next.length >= MAX_UPLOAD_FILES) {
+          setError(`一次最多上传 ${MAX_UPLOAD_FILES} 个文件`);
           break;
         }
-        if (!isAcceptedFile(file)) {
-          setError(`不支持的文件类型：${file.name}（仅 ${acceptedHint}）`);
-          continue;
-        }
+        const basics = validateUploadBasics(file.name, file.size);
         const duplicate = next.some(
           (item) =>
             item.file.name === file.name && item.file.size === file.size,
         );
         if (duplicate) {
+          continue;
+        }
+        if (!basics.ok) {
+          next.push({
+            id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
+            file,
+            status: "error",
+            error: basics.error,
+          });
           continue;
         }
         next.push({
@@ -204,9 +256,21 @@ export function DocumentUploadForm({
     setError(null);
 
     let successCount = 0;
-    let failCount = 0;
+    const failedItems: Array<{ name: string; reason: string }> = [];
 
     for (const item of files) {
+      if (item.status === "done") {
+        successCount += 1;
+        continue;
+      }
+      if (item.status === "error") {
+        failedItems.push({
+          name: item.file.name,
+          reason: item.error ?? "上传失败",
+        });
+        continue;
+      }
+
       setFiles((current) =>
         current.map((file) =>
           file.id === item.id
@@ -238,9 +302,9 @@ export function DocumentUploadForm({
           ),
         );
       } catch (uploadError) {
-        failCount += 1;
         const message =
           uploadError instanceof Error ? uploadError.message : "上传失败";
+        failedItems.push({ name: item.file.name, reason: message });
         setFiles((current) =>
           current.map((file) =>
             file.id === item.id
@@ -253,13 +317,18 @@ export function DocumentUploadForm({
 
     setUploading(false);
 
-    if (failCount === 0 && successCount > 0) {
+    if (failedItems.length === 0 && successCount > 0) {
       router.push(`/knowledge/documents?kb=${encodeURIComponent(knowledgeBaseId)}`);
       return;
     }
 
-    if (failCount > 0) {
-      setError(`完成 ${successCount} 个，失败 ${failCount} 个。可移除失败项后重试。`);
+    if (failedItems.length > 0) {
+      const failedSummary = failedItems
+        .map((item) => `「${item.name}」${item.reason}`)
+        .join("；");
+      setError(
+        `完成 ${successCount} 个，失败 ${failedItems.length} 个：${failedSummary}。可移除失败项后重试。`,
+      );
     }
   }
 
@@ -354,22 +423,26 @@ export function DocumentUploadForm({
           <span className="mr-1 text-rose-300">*</span>
           文件上传
         </p>
-        <p className="mt-1 text-xs leading-6 text-slate-500">
-          支持一次最多 {MAX_FILES} 个文件。上传后将自动切片并写入向量索引。
-        </p>
 
         <input
           ref={fileRef}
           type="file"
-          accept={ACCEPTED_EXTENSIONS.join(",")}
+          accept={acceptAttribute()}
           multiple
           className="hidden"
           onChange={(event) => addFiles(event.target.files)}
         />
 
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => fileRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              fileRef.current?.click();
+            }
+          }}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragOver(true);
@@ -387,55 +460,79 @@ export function DocumentUploadForm({
             setDragOver(false);
             addFiles(event.dataTransfer.files);
           }}
-          className={`mt-4 flex w-full flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-12 text-center transition ${
+          className={`mt-4 flex w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-14 text-center transition ${
             dragOver
               ? "border-cyan-300/50 bg-cyan-300/10"
               : "border-white/15 bg-white/[0.02] hover:border-white/25"
           }`}
         >
-          <Upload className="h-8 w-8 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-200">点击或拖拽上传文件</p>
-          <p className="mt-1 text-xs text-slate-500">
-            支持 {acceptedHint}，单个文件建议不超过 20MB
+          <Upload className="h-8 w-8 text-slate-400" strokeWidth={1.5} />
+          <p className="mt-3 text-base font-medium text-slate-100">
+            点击或拖拽上传文件
           </p>
-        </button>
+          <p className="mt-2 text-sm text-slate-500">
+            {"支持文档、图片等多种文件格式。"}
+            <FormatRequirementsHint fileCount={files.length} />
+          </p>
+        </div>
 
         {files.length ? (
           <ul className="mt-4 grid gap-2">
-            {files.map((item) => (
-              <li
-                key={item.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <FileText className="h-4 w-4 shrink-0 text-cyan-200/80" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm text-slate-100">
-                      {item.file.name}
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      {formatBytes(item.file.size)}
-                      {item.status === "uploading"
-                        ? " · 上传解析中…"
-                        : item.status === "done"
-                          ? " · 已提交"
-                          : item.status === "error"
-                            ? ` · ${item.error ?? "失败"}`
-                            : " · 待上传"}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={uploading && item.status === "uploading"}
-                  onClick={() => removeFile(item.id)}
-                  className="inline-flex items-center gap-1 text-xs text-rose-200/90 hover:text-rose-100 disabled:opacity-40"
+            {files.map((item) => {
+              const isError = item.status === "error";
+              const isDone = item.status === "done";
+              return (
+                <li
+                  key={item.id}
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                    isError
+                      ? "border-rose-400/30 bg-rose-400/10"
+                      : isDone
+                        ? "border-emerald-400/20 bg-emerald-400/5"
+                        : "border-white/10 bg-white/[0.03]"
+                  }`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  移除
-                </button>
-              </li>
-            ))}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText
+                      className={`h-4 w-4 shrink-0 ${
+                        isError ? "text-rose-300" : "text-cyan-200/80"
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-slate-100">
+                        {item.file.name}
+                      </p>
+                      <p
+                        className={`text-[11px] ${
+                          isError
+                            ? "text-rose-200"
+                            : isDone
+                              ? "text-emerald-300/80"
+                              : "text-slate-500"
+                        }`}
+                      >
+                        {formatBytes(item.file.size)}
+                        {" · "}
+                        {isError ? (
+                          <span className="font-medium">失败：{fileStatusLabel(item)}</span>
+                        ) : (
+                          fileStatusLabel(item)
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={uploading && item.status === "uploading"}
+                    onClick={() => removeFile(item.id)}
+                    className="inline-flex items-center gap-1 text-xs text-rose-200/90 hover:text-rose-100 disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    移除
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </section>
@@ -445,12 +542,15 @@ export function DocumentUploadForm({
         <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-6 text-slate-400">
           <li>上传后文档会立即出现在知识库列表，状态显示解析进度。</li>
           <li>文本会按规则切片，并通过本地 embedding 模型写入 pgvector。</li>
+          <li>
+            扫描件 / 图片型 PDF（无可复制文字）会自动走 OCR（较慢，首次需加载中文语言包）。
+          </li>
           <li>解析完成后可在列表中查看切片，或直接用于知识检索 / 问答。</li>
         </ul>
       </section>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm leading-7 text-rose-100">
           {error}
         </div>
       ) : null}

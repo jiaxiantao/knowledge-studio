@@ -83,9 +83,13 @@ GH_PAGES=1 pnpm build:pages
 | `OLLAMA_MODEL` / `OLLAMA_EMBED_MODEL` | 对话与 embedding 模型 |
 | `OLLAMA_NATIVE_BASE_URL` | embedding 原生 Ollama 地址（可选） |
 | `UPLOAD_DIR` | 上传文件目录（默认 `data/uploads`） |
-| `MAX_UPLOAD_BYTES` | 上传大小上限（默认 20MB） |
+| `MAX_UPLOAD_BYTES` | 上传绝对上限（默认 150MB；表格/图片/文本另有更严类型限制） |
 | `RAG_MIN_SCORE` | 向量召回最低分（默认 0.42） |
 | `INGEST_STUCK_MINUTES` | 解析超时判定（默认 15 分钟） |
+| `PDF_OCR_ENABLED` | 扫描件 PDF 自动 OCR（默认开启） |
+| `PDF_OCR_LANGS` | OCR 语言，默认 `chi_sim`（需对应 `@tesseract.js-data/*` 包） |
+| `PDF_OCR_MAX_PAGES` | 单文件最多 OCR 页数（默认 40） |
+| `PDF_OCR_SCALE` | OCR 渲染倍率 1–3（默认 1.5，越大越慢越清晰） |
 | `LLM_DISABLED` | CI/演示模式，跳过真实 LLM 调用 |
 
 ## 许可

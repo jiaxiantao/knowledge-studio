@@ -15,10 +15,15 @@ import {
   type ChunkRecord,
 } from "@/lib/chunk-types";
 import { getReadyDb } from "@/lib/db";
-import { detectFormat, extractTextFromFile } from "@/lib/document-ingest";
+import { extractTextFromFile } from "@/lib/document-ingest";
 import { embedText, toPgVectorLiteral } from "@/lib/embeddings";
-import { getMaxUploadBytes, getUploadDir } from "@/lib/rag-config";
+import { getUploadDir } from "@/lib/rag-config";
 import { isDocumentIngestStuck } from "@/lib/document-status";
+import {
+  ABSOLUTE_MAX_UPLOAD_BYTES,
+  formatBytesLabel,
+  validateUploadBasics,
+} from "@/lib/upload-rules";
 
 export type { ChunkRecord } from "@/lib/chunk-types";
 export { CHUNK_CONTENT_MAX, CHUNK_TITLE_MAX } from "@/lib/chunk-types";
@@ -93,7 +98,7 @@ export async function listDocuments(knowledgeBaseId?: string) {
 
   const docs = await db.document.findMany({
     where: knowledgeBaseId ? { knowledgeBaseId } : undefined,
-    orderBy: { updatedAt: "desc" },
+    orderBy: { createdAt: "desc" },
     include: { _count: { select: { chunks: true } } },
   });
 
@@ -101,11 +106,7 @@ export async function listDocuments(knowledgeBaseId?: string) {
 }
 
 export function formatMaxUploadSize() {
-  const bytes = getMaxUploadBytes();
-  if (bytes < 1024 * 1024) {
-    return `${Math.round(bytes / 1024)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+  return formatBytesLabel(ABSOLUTE_MAX_UPLOAD_BYTES);
 }
 
 export async function getDocument(id: string) {
@@ -385,7 +386,13 @@ async function saveUploadFile(
   const uploadDir = getUploadDir();
   await mkdir(uploadDir, { recursive: true });
 
-  const storageKey = `${Date.now()}-${randomUUID().slice(0, 8)}.${format === "md" ? "md" : format}`;
+  const ext =
+    format === "md"
+      ? "md"
+      : format === "jpeg"
+        ? "jpg"
+        : String(format);
+  const storageKey = `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
   const absolutePath = path.join(uploadDir, storageKey);
 
   const arrayBuffer = await file.arrayBuffer();
@@ -405,14 +412,25 @@ export async function createUploadedDocument(
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
-  const format = detectFormat(file.name);
-  if (!format) {
-    throw new Error("仅支持 .md / .txt / .pdf");
+  const basics = validateUploadBasics(file.name, file.size);
+  if (!basics.ok) {
+    throw new Error(basics.error);
   }
+  const format = basics.format as DocumentFormat;
 
-  const maxBytes = getMaxUploadBytes();
-  if (file.size > maxBytes) {
-    throw new Error(`文件大小不能超过 ${formatMaxUploadSize()}`);
+  // Image dimension check before persisting.
+  if (["png", "jpg", "jpeg", "bmp", "gif", "webp"].includes(format)) {
+    const { imageSize } = await import("image-size");
+    const { validateImageDimensions } = await import("@/lib/upload-rules");
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const dim = imageSize(buffer);
+    if (!dim.width || !dim.height) {
+      throw new Error("无法读取图片尺寸");
+    }
+    const dimError = validateImageDimensions(dim.width, dim.height);
+    if (dimError) {
+      throw new Error(dimError);
+    }
   }
 
   const kb = knowledgeBaseId
@@ -504,12 +522,25 @@ export async function processDocumentIngest(documentId: string) {
       errorMessage: null,
     });
 
-    const text = await extractTextFromFile(absolutePath, document.format);
+    const text = await extractTextFromFile(absolutePath, document.format, {
+      onProgress: async ({ phase, ratio }) => {
+        // Keep OCR in the early progress band before chunking/embedding.
+        const progress =
+          phase === "ocr"
+            ? Math.min(28, Math.round(12 + ratio * 16))
+            : Math.min(18, Math.round(12 + ratio * 6));
+        await setDocumentProgress(documentId, { progress });
+      },
+    });
     if (!text) {
-      throw new Error("未能从文件中提取到文本内容");
+      throw new Error(
+        document.format === "pdf"
+          ? "未能从 PDF 提取到文字内容。该文件可能是扫描件/图片型 PDF。"
+          : "未能从文件中提取到文本内容",
+      );
     }
 
-    await setDocumentProgress(documentId, { progress: 22 });
+    await setDocumentProgress(documentId, { progress: 30 });
 
     const pieces = splitIntoChunks(text);
     if (!pieces.length) {

@@ -138,7 +138,7 @@ export function DocumentLibrary({
       }
       return [...byId.values()].sort(
         (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
     });
   }, []);
@@ -659,10 +659,10 @@ export function DocumentLibrary({
                         >
                           去上传
                         </Link>{" "}
-                        .md / .txt / .pdf 开始构建知识库。
+                        .pdf / Office / 表格 / 图片 / 文本 开始构建知识库。
                       </>
                     ) : (
-                      " 上传 .md / .txt / .pdf 开始构建知识库。"
+                      " 上传文档、表格、图片或文本开始构建知识库。"
                     )}
                   </td>
                 </tr>

@@ -13,6 +13,21 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: isGhPages,
   },
+  serverExternalPackages: [
+    "@hyzyla/pdfium",
+    "@napi-rs/canvas",
+    "tesseract.js",
+    "pdf-parse",
+    "officeparser",
+    "mammoth",
+    "xlsx",
+  ],
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "160mb",
+    },
+    proxyClientMaxBodySize: "160mb",
+  },
   ...(isGhPages
     ? {
         env: {
@@ -26,6 +41,11 @@ const nextConfig: NextConfig = {
           "/*": [
             "./node_modules/.prisma/client/**/*",
             "./node_modules/@prisma/client/**/*",
+            "./node_modules/@hyzyla/pdfium/**/*",
+            "./node_modules/@napi-rs/canvas/**/*",
+            "./node_modules/tesseract.js/**/*",
+            "./node_modules/tesseract.js-core/**/*",
+            "./node_modules/@tesseract.js-data/**/*",
           ],
         },
         turbopack: {},

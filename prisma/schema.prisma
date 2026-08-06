@@ -27,7 +27,20 @@ enum DocumentStatus {
 enum DocumentFormat {
   md
   txt
+  html
   pdf
+  doc
+  docx
+  ppt
+  pptx
+  xls
+  xlsx
+  png
+  jpg
+  jpeg
+  bmp
+  gif
+  webp
 }
 
 model DocumentCategory {

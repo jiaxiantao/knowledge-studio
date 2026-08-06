@@ -1,10 +1,11 @@
-import type { ChatStreamMeta } from "@/lib/chat-types";
+import type { ChatHistoryTurn, ChatStreamMeta } from "@/lib/chat-types";
 
 export type ChatReference = {
   id: string;
   title: string;
   slug: string;
   summary: string | null;
+  knowledgeBaseId?: string;
   tags: string[];
   score?: number;
   similarity?: number;
@@ -15,6 +16,7 @@ export type StreamChatOptions = {
   regenerate?: boolean;
   temperature?: number;
   knowledgeBaseId?: string;
+  history?: ChatHistoryTurn[];
 };
 
 type StreamHandlers = {
@@ -84,6 +86,7 @@ export async function streamChatQuestion(
       regenerate: options.regenerate,
       temperature: options.temperature,
       knowledgeBaseId: options.knowledgeBaseId,
+      history: options.history,
     }),
   });
 

@@ -48,3 +48,7 @@ next-env.d.ts
 
 /docs
 /data/uploads/
+/data/tessdata/
+
+# Local tesseract dumps (use npm packs instead)
+*.traineddata

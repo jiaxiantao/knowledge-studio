@@ -19,6 +19,31 @@ function contentTypeForFormat(format: string) {
       return "text/markdown; charset=utf-8";
     case "txt":
       return "text/plain; charset=utf-8";
+    case "html":
+      return "text/html; charset=utf-8";
+    case "doc":
+      return "application/msword";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "ppt":
+      return "application/vnd.ms-powerpoint";
+    case "pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "bmp":
+      return "image/bmp";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
     default:
       return "application/octet-stream";
   }

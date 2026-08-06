@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, ChevronDown, ExternalLink, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { AssistantMarkdown } from "@/components/assistant/assistant-markdown";
@@ -11,6 +12,89 @@ type ChatMessageProps = {
   message: ChatMessage;
   isStreaming: boolean;
 };
+
+function confidenceTone(confidence?: number) {
+  if (confidence == null) {
+    return "text-slate-500";
+  }
+  if (confidence >= 0.72) {
+    return "text-emerald-300";
+  }
+  if (confidence >= 0.45) {
+    return "text-amber-200";
+  }
+  return "text-rose-300";
+}
+
+function MessageReferences({
+  message,
+  isStreaming,
+}: {
+  message: ChatMessage;
+  isStreaming: boolean;
+}) {
+  const references = message.references ?? [];
+  if (isStreaming || !references.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 space-y-2 border-t border-white/5 pt-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <span>引用来源 · {references.length}</span>
+        {typeof message.confidence === "number" ? (
+          <span className={confidenceTone(message.confidence)}>
+            {message.confidenceLabel?.trim() ||
+              `置信度 ${(message.confidence * 100).toFixed(0)}%`}
+          </span>
+        ) : null}
+      </div>
+      <ul className="grid gap-2">
+        {references.map((reference, index) => {
+          const href = reference.knowledgeBaseId
+            ? `/knowledge/chunks?id=${encodeURIComponent(reference.slug)}&kb=${encodeURIComponent(reference.knowledgeBaseId)}`
+            : `/knowledge/chunks?id=${encodeURIComponent(reference.slug)}`;
+          const score =
+            typeof reference.similarity === "number"
+              ? reference.similarity
+              : reference.score;
+
+          return (
+            <li key={reference.id}>
+              <Link
+                href={href}
+                className="group flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 transition hover:border-cyan-300/25 hover:bg-white/[0.05]"
+              >
+                <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-violet-400/15 text-[11px] font-medium text-violet-200">
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <BookOpen className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                    <span className="truncate text-sm text-slate-200 group-hover:text-white">
+                      {reference.title}
+                    </span>
+                    {typeof score === "number" ? (
+                      <span className="shrink-0 font-mono text-[11px] text-slate-600">
+                        {score.toFixed(3)}
+                      </span>
+                    ) : null}
+                  </span>
+                  {reference.summary ? (
+                    <span className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                      {reference.summary}
+                    </span>
+                  ) : null}
+                </span>
+                <ExternalLink className="mt-1 h-3.5 w-3.5 shrink-0 text-slate-600 transition group-hover:text-cyan-200" />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 export function ChatMessageBubble({ message, isStreaming }: ChatMessageProps) {
   const parsed = parseAssistantAnswer(message.content);
@@ -84,6 +168,8 @@ export function ChatMessageBubble({ message, isStreaming }: ChatMessageProps) {
           正在回答…
         </p>
       ) : null}
+
+      <MessageReferences message={message} isStreaming={isStreaming} />
     </div>
   );
 }

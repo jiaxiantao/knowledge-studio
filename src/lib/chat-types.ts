@@ -10,6 +10,7 @@ export type ChatMessageReference = {
   title: string;
   slug: string;
   summary: string | null;
+  knowledgeBaseId?: string;
   score?: number;
   similarity?: number;
 };
@@ -21,9 +22,15 @@ export type ChatMessage = {
   images?: ChatImageAttachment[];
   status?: ChatMessageStatus;
   confidence?: number;
+  confidenceLabel?: string;
   alternatives?: string[];
   references?: ChatMessageReference[];
   createdAt: string;
+};
+
+export type ChatHistoryTurn = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 export type ChatBranch = {
@@ -49,6 +56,9 @@ export type ChatStreamMeta = {
   confidenceLabel: string;
   alternatives: string[];
   mock?: boolean;
+  searchMs?: number;
+  minScore?: number;
+  hitCount?: number;
 };
 
 export type ChatMetrics = {
