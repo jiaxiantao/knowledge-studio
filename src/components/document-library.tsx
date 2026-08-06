@@ -39,6 +39,11 @@ function isRetryable(doc: DocumentRecord) {
   return doc.status === "failed" || isDocumentIngestStuck(doc);
 }
 
+/** Ready docs can be force-reparsed so new chunking (parent-child, etc.) applies. */
+function canForceReparse(doc: DocumentRecord) {
+  return doc.status === "ready" || isRetryable(doc);
+}
+
 function DocumentStatusCell({ doc }: { doc: DocumentRecord }) {
   if (isProcessing(doc.status)) {
     const progress = Math.min(100, Math.max(0, doc.progress ?? 0));
@@ -114,6 +119,10 @@ type DeleteTarget =
   | { type: "single"; document: DocumentRecord }
   | { type: "batch"; ids: string[] };
 
+type ReparseTarget =
+  | { type: "single"; documentId: string; documentName: string }
+  | { type: "batch"; ids: string[]; readyCount: number };
+
 export function DocumentLibrary({
   knowledgeBaseId,
 }: {
@@ -128,6 +137,9 @@ export function DocumentLibrary({
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
+  const [pendingReparse, setPendingReparse] = useState<ReparseTarget | null>(
+    null,
+  );
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const staticSite = isStaticSite();
@@ -268,21 +280,7 @@ export function DocumentLibrary({
     }
   }
 
-  async function handleBatchRetry() {
-    if (staticSite || !validSelectedIds.length) {
-      return;
-    }
-
-    const retryableIds = validSelectedIds.filter((id) => {
-      const doc = documents.find((item) => item.id === id);
-      return doc && isRetryable(doc);
-    });
-
-    if (!retryableIds.length) {
-      setError("所选文档均不可重试（需失败或解析超时）");
-      return;
-    }
-
+  async function queueReparse(ids: string[]) {
     setRetrying(true);
     setError(null);
 
@@ -290,7 +288,7 @@ export function DocumentLibrary({
       const response = await fetch("/api/documents/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "retry", ids: retryableIds }),
+        body: JSON.stringify({ action: "retry", ids }),
       });
       const payload = (await response.json()) as {
         documents?: DocumentRecord[];
@@ -300,7 +298,7 @@ export function DocumentLibrary({
       };
 
       if (!response.ok) {
-        throw new Error(payload.error ?? "批量重试失败");
+        throw new Error(payload.error ?? "重新解析失败");
       }
 
       if (payload.documents?.length) {
@@ -312,43 +310,90 @@ export function DocumentLibrary({
           `已排队 ${payload.queued ?? 0} 项，${payload.failed.length} 项失败`,
         );
       }
+
+      setPendingReparse(null);
     } catch (retryError) {
       setError(
-        retryError instanceof Error ? retryError.message : "批量重试失败",
+        retryError instanceof Error ? retryError.message : "重新解析失败",
       );
     } finally {
       setRetrying(false);
     }
   }
 
-  async function handleRetryDocument(documentId: string) {
+  async function confirmReparse() {
+    if (staticSite || !pendingReparse) {
+      return;
+    }
+
+    const ids =
+      pendingReparse.type === "single"
+        ? [pendingReparse.documentId]
+        : pendingReparse.ids;
+    await queueReparse(ids);
+  }
+
+  async function handleBatchRetry(options: { includeReady?: boolean } = {}) {
+    if (staticSite || !validSelectedIds.length) {
+      return;
+    }
+
+    const retryableIds = validSelectedIds.filter((id) => {
+      const doc = documents.find((item) => item.id === id);
+      if (!doc) {
+        return false;
+      }
+      return options.includeReady ? canForceReparse(doc) : isRetryable(doc);
+    });
+
+    if (!retryableIds.length) {
+      setError(
+        options.includeReady
+          ? "所选文档均不可重新解析（需就绪 / 失败 / 解析超时）"
+          : "所选文档均不可重试（需失败或解析超时）",
+      );
+      return;
+    }
+
+    const readyCount = retryableIds.filter((id) => {
+      const doc = documents.find((item) => item.id === id);
+      return doc?.status === "ready";
+    }).length;
+
+    if (readyCount > 0) {
+      setPendingReparse({
+        type: "batch",
+        ids: retryableIds,
+        readyCount,
+      });
+      return;
+    }
+
+    await queueReparse(retryableIds);
+  }
+
+  async function handleRetryDocument(
+    documentId: string,
+    options: { includeReady?: boolean } = {},
+  ) {
     if (staticSite) {
       return;
     }
 
-    setRetrying(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/documents/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "retry", ids: [documentId] }),
-      });
-      const payload = (await response.json()) as {
-        documents?: DocumentRecord[];
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error ?? "重试失败");
-      }
-      if (payload.documents?.length) {
-        mergeDocuments(payload.documents);
-      }
-    } catch (retryError) {
-      setError(retryError instanceof Error ? retryError.message : "重试失败");
-    } finally {
-      setRetrying(false);
+    const doc = documents.find((item) => item.id === documentId);
+    if (!doc) {
+      return;
     }
+    if (options.includeReady && doc.status === "ready") {
+      setPendingReparse({
+        type: "single",
+        documentId: doc.id,
+        documentName: doc.name,
+      });
+      return;
+    }
+
+    await queueReparse([documentId]);
   }
 
   function exitBatchMode() {
@@ -465,7 +510,16 @@ export function DocumentLibrary({
                 onClick={() => void handleBatchRetry()}
                 className="rounded-xl border border-white/10 px-3 py-1.5 text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-40"
               >
-                {retrying ? "排队中…" : "批量重试解析"}
+                {retrying ? "排队中…" : "批量重试失败项"}
+              </button>
+              <button
+                type="button"
+                disabled={!selectedCount || retrying || deleting}
+                onClick={() => void handleBatchRetry({ includeReady: true })}
+                className="rounded-xl border border-cyan-300/30 px-3 py-1.5 text-cyan-100 transition hover:bg-cyan-400/10 disabled:opacity-40"
+                title="含已就绪文档：按当前切分配置重新切片与向量化"
+              >
+                {retrying ? "排队中…" : "按新切分重解析"}
               </button>
               <button
                 type="button"
@@ -616,6 +670,21 @@ export function DocumentLibrary({
                               重试解析
                             </button>
                           ) : null}
+                          {doc.status === "ready" ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleRetryDocument(doc.id, {
+                                  includeReady: true,
+                                })
+                              }
+                              disabled={staticSite || retrying}
+                              className="text-slate-400 hover:text-cyan-100 disabled:opacity-50"
+                              title="按当前切分配置重新切片"
+                            >
+                              重新解析
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() =>
@@ -713,6 +782,50 @@ export function DocumentLibrary({
               className="rounded-xl bg-rose-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-rose-300 disabled:opacity-50"
             >
               {deleting ? "删除中…" : "确认删除"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingReparse)}
+        onOpenChange={(open) => {
+          if (!open && !retrying) {
+            setPendingReparse(null);
+          }
+        }}
+      >
+        <DialogContent
+          onClose={() => {
+            if (!retrying) {
+              setPendingReparse(null);
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>确认重新解析</DialogTitle>
+            <DialogDescription>
+              {pendingReparse?.type === "batch"
+                ? `将对 ${pendingReparse.readyCount} 个已就绪文档按当前切分配置重新切片与向量化（父子切分等会生效），可能较慢。是否继续？`
+                : `将按当前切分配置重新切片与向量化「${pendingReparse?.type === "single" ? pendingReparse.documentName : ""}」（父子切分等会生效）。是否继续？`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={() => setPendingReparse(null)}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 hover:text-white disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={() => void confirmReparse()}
+              className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-50"
+            >
+              {retrying ? "排队中…" : "确认重解析"}
             </button>
           </div>
         </DialogContent>

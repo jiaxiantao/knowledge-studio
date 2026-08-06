@@ -16,6 +16,7 @@
 | `/knowledge/upload` | 上传 md/txt/pdf（异步解析 + 进度） |
 | `/knowledge/chunks?id=` | 切片详情：搜索、CRUD、启停检索 |
 | `/retrieval` | 混合检索试跑（向量 + 关键词，topK） |
+| `/retrieval/eval` | 评测集 Hit@K / MRR + 检索融合说明 |
 | `/assistant` | 流式问答（思维链 → 结论），会话持久化到 DB |
 | `/assistant/share?id=` | 分享对话只读页（复制链接打开） |
 
@@ -29,7 +30,8 @@
 | `GET /api/documents/[id]/file` | 下载源文件 |
 | `GET/POST /api/categories` | 类目列表 / 创建 |
 | `GET/POST/PUT/DELETE /api/chat/sessions` | 问答会话 CRUD |
-| `POST /api/retrieval` | 向量检索 |
+| `POST /api/retrieval` | 向量/混合检索 |
+| `GET/POST /api/retrieval/eval` | 默认评测集 / 跑一轮 Hit@K·MRR |
 | `POST /api/chat` | 切片召回 + 流式问答 |
 | `POST /api/chat/suggestions` | 推荐追问 |
 | `GET /api/health` | DB + LLM 状态 |
@@ -97,6 +99,24 @@ GH_PAGES=1 pnpm build:pages
 | `RAG_CHUNK_OVERLAP` | 切片重叠（默认 64） |
 | `PDF_OCR_SCALE` | OCR 渲染倍率 1–3（默认 1.5，越大越慢越清晰） |
 | `LLM_DISABLED` | CI/演示模式，跳过真实 LLM 调用 |
+
+## 混合检索如何融合（答辩口述）
+
+1. **两路召回**：向量（pgvector）+ 关键词（pg_trgm）各自取候选。  
+2. **阈值**：向量分 ≥ `RAG_MIN_SCORE` **或** 关键词分 ≥ `RAG_KEYWORD_MIN_SCORE`。  
+3. **打分**：两路都命中 → `score = w·vector + (1−w)·keyword`（`w` 默认 0.6）；单路 → 用该路分数。  
+4. **排序展示**：按 `score` 降序截断 topK；问答引用与检索工作台同一套分数。
+
+界面说明见 [`/retrieval/eval`](http://localhost:3000/retrieval/eval)。
+
+## 评测集与旧库重解析
+
+1. **重解析**：知识管理 → 批量操作 →「按新切分重解析」（含已就绪文档）；或  
+   `pnpm reparse:kb -- --kb <knowledgeBaseId>`（需 `pnpm dev`）。  
+2. **评测**：打开 `/retrieval/eval`，选用例集（软考 / 技术博客 / 混合）与对应知识库 →「跑一轮评测」。  
+   - **Hit@K / MRR**：只统计「应命中」题  
+   - **正确拒答率**：只统计「应不命中」题（弱噪声命中不扣分，可用 `rejectBelowScore`）  
+3. 默认用例在 `src/lib/rag-eval/cases.ts`，已按本地「软考相关知识」「我的技术博客」真实文件名对齐。
 
 ## 许可
 

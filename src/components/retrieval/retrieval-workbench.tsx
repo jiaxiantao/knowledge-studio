@@ -438,9 +438,9 @@ export function RetrievalWorkbench({
         </div>
 
         <div className="overflow-y-auto px-5 py-2 [scrollbar-gutter:stable_both-edges]">
-          <SettingRow label="检索模式" hint="当前仅支持向量召回">
+          <SettingRow label="检索模式" hint="混合：向量 + 关键词加权融合">
             <span className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-1.5 text-sm text-slate-300">
-              向量召回
+              混合检索
             </span>
           </SettingRow>
           <SettingRow label="向量模型" hint="由 OLLAMA_EMBED_MODEL 配置">
@@ -488,6 +488,14 @@ export function RetrievalWorkbench({
               className="w-20 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1.5 text-center text-sm text-white outline-none focus:border-cyan-300/40 disabled:opacity-50"
             />
           </SettingRow>
+          <div className="border-t border-white/5 py-3">
+            <Link
+              href={`/retrieval/eval?kb=${encodeURIComponent(knowledgeBaseId)}`}
+              className="text-xs text-cyan-200/90 hover:text-white"
+            >
+              打开评测集 · 融合说明 →
+            </Link>
+          </div>
         </div>
       </aside>
 
@@ -584,7 +592,7 @@ export function RetrievalWorkbench({
               <div className="max-w-md text-center">
                 <p className="text-sm text-slate-400">在下方输入检索问题</p>
                 <p className="mt-2 text-xs leading-6 text-slate-600">
-                  将对已选的 {selectedIds.length} 个知识库联合召回，结果按语义相关度排序。
+                  将对已选的 {selectedIds.length} 个知识库联合召回，结果按融合检索分数排序。
                 </p>
               </div>
             </div>

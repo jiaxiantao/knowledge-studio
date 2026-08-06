@@ -35,6 +35,8 @@
     "db:seed": "prisma db seed",
     "db:setup": "prisma db push && prisma db seed",
     "db:studio": "prisma studio",
+    "reparse:kb": "node scripts/reparse-kb.mjs",
+    "eval:smoke": "tsx scripts/run-rag-eval-smoke.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
