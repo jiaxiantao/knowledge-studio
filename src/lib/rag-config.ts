@@ -45,13 +45,16 @@ export function getKeywordMinScore() {
   return Math.min(Math.max(raw, 0), 1);
 }
 
-/** Reciprocal rank fusion constant (default 60). */
-export function getHybridRrfK() {
-  const raw = Number(process.env.RAG_HYBRID_RRF_K ?? "60");
-  if (!Number.isFinite(raw) || raw <= 0) {
-    return 60;
+/**
+ * Hybrid fusion weight for the vector leg (0–1, default 0.6).
+ * Final score = w·vector + (1−w)·keyword when both legs hit; single-leg uses that leg alone.
+ */
+export function getHybridVectorWeight() {
+  const raw = Number(process.env.RAG_HYBRID_VECTOR_WEIGHT ?? "0.6");
+  if (!Number.isFinite(raw)) {
+    return 0.6;
   }
-  return Math.floor(raw);
+  return Math.min(Math.max(raw, 0), 1);
 }
 
 /** Hybrid retrieval (vector + pg_trgm keyword). Set RAG_HYBRID=0 to force vector-only. */

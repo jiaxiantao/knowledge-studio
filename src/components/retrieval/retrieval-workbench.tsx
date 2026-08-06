@@ -35,6 +35,9 @@ type RetrievalHit = {
   title: string | null;
   content: string;
   score: number;
+  vectorScore?: number | null;
+  keywordScore?: number | null;
+  sources?: Array<"vector" | "keyword">;
 };
 
 type RetrievalMeta = {
@@ -162,8 +165,18 @@ function RetrievalResultCard({
             </span>
           ) : null}
           <span className="text-cyan-200">
-            语义分数 <strong className="font-mono">{hit.score.toFixed(4)}</strong>
+            检索分数 <strong className="font-mono">{hit.score.toFixed(4)}</strong>
           </span>
+          {typeof hit.vectorScore === "number" ? (
+            <span className="text-slate-500">
+              向量 <strong className="font-mono text-slate-400">{hit.vectorScore.toFixed(3)}</strong>
+            </span>
+          ) : null}
+          {typeof hit.keywordScore === "number" ? (
+            <span className="text-slate-500">
+              关键词 <strong className="font-mono text-slate-400">{hit.keywordScore.toFixed(3)}</strong>
+            </span>
+          ) : null}
           <span className="text-slate-500">{hit.content.length} 字符</span>
         </div>
         <div className="flex items-center gap-2">
@@ -366,7 +379,9 @@ export function RetrievalWorkbench({
       if (!response.ok) {
         throw new Error(payload.error ?? "检索失败");
       }
-      setResults(payload.results ?? []);
+      setResults(
+        [...(payload.results ?? [])].sort((left, right) => right.score - left.score),
+      );
       setMeta(payload.meta ?? null);
     } catch (retrievalError) {
       setResults([]);

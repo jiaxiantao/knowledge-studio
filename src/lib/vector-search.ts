@@ -3,7 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { getReadyDb } from "@/lib/db";
 import { embedText, toPgVectorLiteral } from "@/lib/embeddings";
 import {
-  getHybridRrfK,
+  getHybridVectorWeight,
   getKeywordMinScore,
   getMinRetrievalScore,
   isHybridRetrievalEnabled,
@@ -21,7 +21,10 @@ export type RetrievedChunk = {
   index: number;
   title: string | null;
   content: string;
-  /** Best comparable score for thresholding / UI (max of vector & keyword legs). */
+  /**
+   * Ranking + display score. Hybrid: weighted fuse of vector/keyword legs;
+   * vector-only: cosine-derived similarity.
+   */
   score: number;
   vectorScore?: number | null;
   keywordScore?: number | null;
@@ -68,8 +71,43 @@ function toVectorScore(distance: number) {
   return Number((1 / (1 + Number(distance))).toFixed(4));
 }
 
-function toDisplayScore(vectorScore?: number | null, keywordScore?: number | null) {
-  return Math.max(vectorScore ?? 0, keywordScore ?? 0);
+/**
+ * Single score used for both ranking and UI.
+ * Both legs present → weighted average; one leg → that leg's raw score.
+ */
+export function fuseRetrievalScore(
+  vectorScore?: number | null,
+  keywordScore?: number | null,
+  vectorWeight = getHybridVectorWeight(),
+) {
+  const hasVector = typeof vectorScore === "number";
+  const hasKeyword = typeof keywordScore === "number";
+
+  if (hasVector && hasKeyword) {
+    const weight = Math.min(Math.max(vectorWeight, 0), 1);
+    return Number(
+      (weight * vectorScore + (1 - weight) * keywordScore).toFixed(4),
+    );
+  }
+  if (hasVector) {
+    return Number(vectorScore.toFixed(4));
+  }
+  if (hasKeyword) {
+    return Number(keywordScore.toFixed(4));
+  }
+  return 0;
+}
+
+function compareByScoreDesc(left: RetrievedChunk, right: RetrievedChunk) {
+  const scoreDelta = right.score - left.score;
+  if (scoreDelta !== 0) {
+    return scoreDelta;
+  }
+  const vectorDelta = (right.vectorScore ?? 0) - (left.vectorScore ?? 0);
+  if (vectorDelta !== 0) {
+    return vectorDelta;
+  }
+  return (right.keywordScore ?? 0) - (left.keywordScore ?? 0);
 }
 
 function mapChunkRow(row: ChunkRow): Omit<RetrievedChunk, "score"> {
@@ -122,23 +160,6 @@ async function isTrgmAvailable(db: PrismaClient) {
   }
 
   return trgmAvailable;
-}
-
-/** Reciprocal rank fusion over ranked chunk id lists. */
-export function reciprocalRankFusion(
-  lists: Array<Array<{ id: string }>>,
-  k = getHybridRrfK(),
-): Map<string, number> {
-  const scores = new Map<string, number>();
-
-  for (const list of lists) {
-    list.forEach((item, index) => {
-      const rank = index + 1;
-      scores.set(item.id, (scores.get(item.id) ?? 0) + 1 / (k + rank));
-    });
-  }
-
-  return scores;
 }
 
 function passesHybridThreshold(
@@ -266,6 +287,7 @@ function mergeHybridChunks(
   keywordMinScore: number,
 ): { results: RetrievedChunk[]; meta: SearchChunksMeta } {
   const byId = new Map<string, RetrievedChunk>();
+  const vectorWeight = getHybridVectorWeight();
 
   for (const hit of vectorHits) {
     byId.set(hit.id, { ...hit });
@@ -278,32 +300,28 @@ function mergeHybridChunks(
       existing.sources = [
         ...new Set([...(existing.sources ?? []), ...(hit.sources ?? [])]),
       ];
-      existing.score = toDisplayScore(existing.vectorScore, existing.keywordScore);
+      existing.score = fuseRetrievalScore(
+        existing.vectorScore,
+        existing.keywordScore,
+        vectorWeight,
+      );
     } else {
       byId.set(hit.id, { ...hit });
     }
   }
 
-  const rrfScores = reciprocalRankFusion([
-    vectorHits.map((hit) => ({ id: hit.id })),
-    keywordHits.map((hit) => ({ id: hit.id })),
-  ]);
-
   const fused = [...byId.values()]
     .filter((chunk) => passesHybridThreshold(chunk, minScore, keywordMinScore))
-    .sort((left, right) => {
-      const rrfDelta =
-        (rrfScores.get(right.id) ?? 0) - (rrfScores.get(left.id) ?? 0);
-      if (rrfDelta !== 0) {
-        return rrfDelta;
-      }
-      return right.score - left.score;
-    })
-    .slice(0, topK)
     .map((chunk) => ({
       ...chunk,
-      score: toDisplayScore(chunk.vectorScore, chunk.keywordScore),
-    }));
+      score: fuseRetrievalScore(
+        chunk.vectorScore,
+        chunk.keywordScore,
+        vectorWeight,
+      ),
+    }))
+    .sort(compareByScoreDesc)
+    .slice(0, topK);
 
   return {
     results: fused,
@@ -318,7 +336,7 @@ function mergeHybridChunks(
 
 /**
  * Expand child hits to parent content for LLM context (Parent-Child RAG).
- * Dedupes by parent id while keeping the best child score.
+ * Dedupes by parent id while keeping the best child score, then sorts by score.
  */
 async function expandChildHitsToParents(
   db: PrismaClient,
@@ -346,17 +364,14 @@ async function expandChildHitsToParents(
   });
 
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const expanded: RetrievedChunk[] = [];
-  const seenParent = new Set<string>();
+  const expandedByKey = new Map<string, RetrievedChunk>();
 
   for (const hit of hits) {
     const meta = byId.get(hit.id);
+    let next: RetrievedChunk;
+
     if (meta?.level === "child" && meta.parent) {
-      if (seenParent.has(meta.parent.id)) {
-        continue;
-      }
-      seenParent.add(meta.parent.id);
-      expanded.push({
+      next = {
         ...hit,
         id: meta.parent.id,
         index: meta.parent.index,
@@ -364,18 +379,22 @@ async function expandChildHitsToParents(
         content: meta.parent.content,
         matchedChunkId: hit.id,
         level: "parent",
-      });
-      continue;
+      };
+    } else {
+      next = {
+        ...hit,
+        matchedChunkId: hit.id,
+        level: meta?.level ?? "leaf",
+      };
     }
 
-    expanded.push({
-      ...hit,
-      matchedChunkId: hit.id,
-      level: meta?.level ?? "leaf",
-    });
+    const existing = expandedByKey.get(next.id);
+    if (!existing || compareByScoreDesc(next, existing) < 0) {
+      expandedByKey.set(next.id, next);
+    }
   }
 
-  return expanded;
+  return [...expandedByKey.values()].sort(compareByScoreDesc);
 }
 
 export async function searchChunksByVector(
@@ -404,7 +423,8 @@ export async function searchChunksByVector(
 }
 
 /**
- * Hybrid retrieval: pgvector semantic leg + pg_trgm keyword leg, merged with RRF.
+ * Hybrid retrieval: pgvector semantic leg + pg_trgm keyword leg.
+ * Candidates are unioned, then ranked by a single fused score (same value shown in UI).
  * Falls back to vector-only when pg_trgm is unavailable or RAG_HYBRID=0.
  */
 export async function searchChunks(

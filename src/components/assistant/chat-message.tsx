@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { AssistantMarkdown } from "@/components/assistant/assistant-markdown";
 import { parseAssistantAnswer } from "@/lib/assistant-answer";
-import type { ChatMessage } from "@/lib/chat-types";
+import type { ChatMessage, ChatMessageReference } from "@/lib/chat-types";
 
 type ChatMessageProps = {
   message: ChatMessage;
@@ -26,6 +26,13 @@ function confidenceTone(confidence?: number) {
   return "text-rose-300";
 }
 
+function referenceScore(reference: ChatMessageReference) {
+  if (typeof reference.similarity === "number") {
+    return reference.similarity;
+  }
+  return reference.score ?? 0;
+}
+
 function MessageReferences({
   message,
   isStreaming,
@@ -33,7 +40,9 @@ function MessageReferences({
   message: ChatMessage;
   isStreaming: boolean;
 }) {
-  const references = message.references ?? [];
+  const references = [...(message.references ?? [])].sort(
+    (left, right) => referenceScore(right) - referenceScore(left),
+  );
   if (isStreaming || !references.length) {
     return null;
   }
@@ -54,10 +63,7 @@ function MessageReferences({
           const href = reference.knowledgeBaseId
             ? `/knowledge/chunks?id=${encodeURIComponent(reference.slug)}&kb=${encodeURIComponent(reference.knowledgeBaseId)}`
             : `/knowledge/chunks?id=${encodeURIComponent(reference.slug)}`;
-          const score =
-            typeof reference.similarity === "number"
-              ? reference.similarity
-              : reference.score;
+          const score = referenceScore(reference);
 
           return (
             <li key={reference.id}>
@@ -79,11 +85,9 @@ function MessageReferences({
                     <span className="truncate text-sm text-slate-200 group-hover:text-white">
                       {reference.title}
                     </span>
-                    {typeof score === "number" ? (
-                      <span className="shrink-0 font-mono text-[11px] text-slate-600">
-                        {score.toFixed(3)}
-                      </span>
-                    ) : null}
+                    <span className="shrink-0 font-mono text-[11px] text-slate-600">
+                      {score.toFixed(3)}
+                    </span>
                   </span>
                   {reference.summary ? (
                     <span className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">

@@ -55,17 +55,19 @@ function resolveKnowledgeBaseIds(body: z.infer<typeof chatSchema>): string[] {
 }
 
 function mapReferences(chunks: RetrievedChunk[]) {
-  return chunks.map((chunk) => ({
-    id: chunk.id,
-    title: `${chunk.documentName} · #${chunk.index + 1}`,
-    slug: chunk.documentId,
-    summary: chunk.content.slice(0, 160),
-    knowledgeBaseId: chunk.knowledgeBaseId,
-    knowledgeBaseName: chunk.knowledgeBaseName,
-    tags: [] as string[],
-    score: chunk.score,
-    similarity: chunk.score,
-  }));
+  return [...chunks]
+    .sort((left, right) => right.score - left.score)
+    .map((chunk) => ({
+      id: chunk.id,
+      title: `${chunk.documentName} · #${chunk.index + 1}`,
+      slug: chunk.documentId,
+      summary: chunk.content.slice(0, 160),
+      knowledgeBaseId: chunk.knowledgeBaseId,
+      knowledgeBaseName: chunk.knowledgeBaseName,
+      tags: [] as string[],
+      score: chunk.score,
+      similarity: chunk.score,
+    }));
 }
 
 function toContextBlocks(chunks: RetrievedChunk[]) {
@@ -81,11 +83,13 @@ function toContextBlocks(chunks: RetrievedChunk[]) {
 function filterRelevantChunks(chunks: RetrievedChunk[]) {
   const minScore = getMinRetrievalScore();
   const keywordMinScore = getKeywordMinScore();
-  return chunks.filter(
-    (chunk) =>
-      (chunk.vectorScore ?? chunk.score) >= minScore ||
-      (chunk.keywordScore ?? 0) >= keywordMinScore,
-  );
+  return chunks
+    .filter(
+      (chunk) =>
+        (chunk.vectorScore ?? chunk.score) >= minScore ||
+        (chunk.keywordScore ?? 0) >= keywordMinScore,
+    )
+    .sort((left, right) => right.score - left.score);
 }
 
 function sanitizeHistory(

@@ -87,7 +87,7 @@ GH_PAGES=1 pnpm build:pages
 | `RAG_MIN_SCORE` | 向量召回最低分（默认 0.42） |
 | `RAG_KEYWORD_MIN_SCORE` | 混合检索关键词 leg 最低 trigram 分（默认 0.12） |
 | `RAG_HYBRID` | 混合检索开关（默认开启；`0` 则仅向量） |
-| `RAG_HYBRID_RRF_K` | RRF 融合常数 k（默认 60） |
+| `RAG_HYBRID_VECTOR_WEIGHT` | 混合检索向量 leg 权重（默认 0.6；两路命中时加权融合分用于排序与展示） |
 | `INGEST_STUCK_MINUTES` | 解析超时判定（默认 15 分钟） |
 | `PDF_OCR_ENABLED` | 扫描件 PDF 自动 OCR（默认开启） |
 | `PDF_OCR_LANGS` | OCR 语言，默认 `chi_sim`（需对应 `@tesseract.js-data/*` 包） |
