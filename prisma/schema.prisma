@@ -66,6 +66,8 @@ model Document {
   /// 0–100 ingest progress while pending/parsing.
   progress        Int            @default(0)
   category        String         @default("默认类目")
+  /// Chunking options chosen at upload: strategy, maxChars, overlap, etc.
+  chunkConfig     Json?
   errorMessage    String?
   storageKey      String
   createdAt       DateTime       @default(now())

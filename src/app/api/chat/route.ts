@@ -11,9 +11,9 @@ import { parseAssistantAnswer } from "@/lib/assistant-answer";
 import { computeConfidenceFromReferences } from "@/lib/chat-confidence";
 import type { ChatHistoryTurn } from "@/lib/chat-types";
 import { isLlmConfigured } from "@/lib/llm-config";
-import { getMinRetrievalScore } from "@/lib/rag-config";
+import { getMinRetrievalScore, getKeywordMinScore } from "@/lib/rag-config";
 import {
-  searchChunksByVector,
+  searchChunks,
   type RetrievedChunk,
 } from "@/lib/vector-search";
 
@@ -80,7 +80,12 @@ function toContextBlocks(chunks: RetrievedChunk[]) {
 
 function filterRelevantChunks(chunks: RetrievedChunk[]) {
   const minScore = getMinRetrievalScore();
-  return chunks.filter((chunk) => chunk.score >= minScore);
+  const keywordMinScore = getKeywordMinScore();
+  return chunks.filter(
+    (chunk) =>
+      (chunk.vectorScore ?? chunk.score) >= minScore ||
+      (chunk.keywordScore ?? 0) >= keywordMinScore,
+  );
 }
 
 function sanitizeHistory(
@@ -192,13 +197,13 @@ export async function POST(request: Request) {
     const knowledgeBaseIds = resolveKnowledgeBaseIds(body);
     const topK = Math.min(20, Math.max(5, knowledgeBaseIds.length * 4));
     const searchStarted = Date.now();
-    const matchedChunks = await searchChunksByVector(
+    const { results: matchedChunks, meta: searchMeta } = await searchChunks(
       body.question,
       topK,
       knowledgeBaseIds,
     );
     const searchMs = Date.now() - searchStarted;
-    const relevantChunks = filterRelevantChunks(matchedChunks);
+    const relevantChunks = matchedChunks;
     const history = sanitizeHistory(body.history);
 
     if (body.stream) {
@@ -248,6 +253,7 @@ export async function POST(request: Request) {
         searchMs,
         minScore: getMinRetrievalScore(),
         hitCount: relevantChunks.length,
+        retrievalMode: searchMeta.mode,
       },
     });
   } catch (error) {

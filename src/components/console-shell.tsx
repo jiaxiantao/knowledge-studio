@@ -14,7 +14,7 @@ export function ConsoleShell({
   const showHeader = !hideHeader && (title || description || actions);
 
   return (
-    <main className="flex h-screen min-h-0 flex-col px-6 py-6 lg:px-8 lg:py-8">
+    <main className="flex h-full min-h-0 flex-col px-6 py-6 lg:px-8 lg:py-8">
       {showHeader ? (
         <div className="mb-6 flex shrink-0 flex-wrap items-end justify-between gap-4">
           <div>
@@ -32,7 +32,15 @@ export function ConsoleShell({
           {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      <div
+        className={`flex min-h-0 flex-1 flex-col ${
+          hideHeader
+            ? "overflow-hidden"
+            : "overflow-y-auto [scrollbar-gutter:stable]"
+        }`}
+      >
+        {children}
+      </div>
     </main>
   );
 }

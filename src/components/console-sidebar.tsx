@@ -14,7 +14,7 @@ export function ConsoleSidebar({
   activePath: string;
 }) {
   return (
-    <aside className="flex w-[14rem] shrink-0 flex-col border-r border-white/10 bg-slate-950/50 px-4 py-6">
+    <aside className="flex h-full w-[14rem] shrink-0 flex-col border-r border-white/10 bg-slate-950/50 px-4 py-6">
       <Link
         href="/knowledge"
         className="flex items-center gap-2.5 px-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 transition hover:text-white"

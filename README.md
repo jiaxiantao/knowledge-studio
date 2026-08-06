@@ -15,7 +15,7 @@
 | `/knowledge` | 文档列表：状态、类目、批量操作、分页 |
 | `/knowledge/upload` | 上传 md/txt/pdf（异步解析 + 进度） |
 | `/knowledge/chunks?id=` | 切片详情：搜索、CRUD、启停检索 |
-| `/retrieval` | 向量检索试跑（topK） |
+| `/retrieval` | 混合检索试跑（向量 + 关键词，topK） |
 | `/assistant` | 流式问答（思维链 → 结论），会话持久化到 DB |
 | `/assistant/share?id=` | 分享对话只读页（复制链接打开） |
 
@@ -85,10 +85,16 @@ GH_PAGES=1 pnpm build:pages
 | `UPLOAD_DIR` | 上传文件目录（默认 `data/uploads`） |
 | `MAX_UPLOAD_BYTES` | 上传绝对上限（默认 150MB；表格/图片/文本另有更严类型限制） |
 | `RAG_MIN_SCORE` | 向量召回最低分（默认 0.42） |
+| `RAG_KEYWORD_MIN_SCORE` | 混合检索关键词 leg 最低 trigram 分（默认 0.12） |
+| `RAG_HYBRID` | 混合检索开关（默认开启；`0` 则仅向量） |
+| `RAG_HYBRID_RRF_K` | RRF 融合常数 k（默认 60） |
 | `INGEST_STUCK_MINUTES` | 解析超时判定（默认 15 分钟） |
 | `PDF_OCR_ENABLED` | 扫描件 PDF 自动 OCR（默认开启） |
 | `PDF_OCR_LANGS` | OCR 语言，默认 `chi_sim`（需对应 `@tesseract.js-data/*` 包） |
-| `PDF_OCR_MAX_PAGES` | 单文件最多 OCR 页数（默认 40） |
+| `PDF_OCR_MAX_PAGES` | 单文件 OCR 页数上限（默认 1000） |
+| `PDF_SPARSE_PAGE_CHARS` | 低于该字数/页时触发 selective OCR（默认 40） |
+| `RAG_CHUNK_MAX_CHARS` | 切片字符上限（默认 512） |
+| `RAG_CHUNK_OVERLAP` | 切片重叠（默认 64） |
 | `PDF_OCR_SCALE` | OCR 渲染倍率 1–3（默认 1.5，越大越慢越清晰） |
 | `LLM_DISABLED` | CI/演示模式，跳过真实 LLM 调用 |
 

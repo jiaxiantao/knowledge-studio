@@ -8,8 +8,10 @@ import {
   getOcrLangs,
   getOcrMaxPages,
   getOcrScale,
+  getPdfSparsePageCharThreshold,
   isPdfOcrEnabled,
 } from "@/lib/rag-config";
+import { isLowQualityPageText, pickBetterPageText } from "@/lib/text-normalize";
 
 export type PdfOcrProgress = {
   page: number;
@@ -67,6 +69,90 @@ async function withOcrWorker<T>(
   }
 }
 
+async function ocrPdfPage(
+  worker: Worker,
+  page: { render: (options: { scale: number; render: "bitmap" }) => Promise<{
+    width: number;
+    height: number;
+    data: Uint8Array | Buffer;
+  }> },
+  scale: number,
+) {
+  const rendered = await page.render({ scale, render: "bitmap" });
+  const png = bitmapToPng(rendered);
+  const recognized = await worker.recognize(png);
+  return recognized.data.text.trim();
+}
+
+/**
+ * OCR pages whose extracted text layer is empty or too sparse.
+ * Used when pdfjs/pdf-parse only recover part of a textbook PDF.
+ */
+export async function supplementSparsePdfPagesWithOcr(
+  pdfBytes: Buffer | Uint8Array,
+  pageTexts: string[],
+  options: {
+    minCharsPerPage?: number;
+    maxPages?: number;
+    onProgress?: (progress: PdfOcrProgress) => void | Promise<void>;
+  } = {},
+): Promise<string[]> {
+  if (!isPdfOcrEnabled()) {
+    return pageTexts;
+  }
+
+  const langs = getOcrLangs();
+  const scale = getOcrScale();
+  const minChars =
+    options.minCharsPerPage ?? getPdfSparsePageCharThreshold();
+  const maxPages = options.maxPages ?? getOcrMaxPages();
+
+  const library = await PDFiumLibrary.init();
+  try {
+    const document = await library.loadDocument(pdfBytes);
+    try {
+      const pageCount = Math.min(document.getPageCount(), maxPages, pageTexts.length);
+      const merged = [...pageTexts];
+
+      await withOcrWorker(langs, async (worker) => {
+        for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+          const existing = merged[pageIndex]?.trim() ?? "";
+          const compactLen = existing.replace(/\s+/g, "").length;
+          const needsOcr =
+            compactLen < minChars || isLowQualityPageText(existing);
+
+          if (!needsOcr) {
+            await options.onProgress?.({
+              page: pageIndex + 1,
+              totalPages: pageCount,
+              ratio: (pageIndex + 1) / pageCount,
+            });
+            continue;
+          }
+
+          const page = document.getPage(pageIndex);
+          const ocrText = await ocrPdfPage(worker, page, scale);
+          if (ocrText) {
+            merged[pageIndex] = pickBetterPageText(existing, ocrText);
+          }
+
+          await options.onProgress?.({
+            page: pageIndex + 1,
+            totalPages: pageCount,
+            ratio: (pageIndex + 1) / pageCount,
+          });
+        }
+      });
+
+      return merged;
+    } finally {
+      document.destroy();
+    }
+  } finally {
+    library.destroy();
+  }
+}
+
 /**
  * Render image-only / scanned PDF pages and OCR them into plain text.
  * Used when pdf-parse returns empty text.
@@ -102,13 +188,7 @@ export async function extractTextFromPdfWithOcr(
       await withOcrWorker(langs, async (worker) => {
         for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
           const page = document.getPage(pageIndex);
-          const rendered = await page.render({
-            scale,
-            render: "bitmap",
-          });
-          const png = bitmapToPng(rendered);
-          const recognized = await worker.recognize(png);
-          const text = recognized.data.text.trim();
+          const text = await ocrPdfPage(worker, page, scale);
           if (text) {
             pageTexts.push(`【第 ${pageIndex + 1} 页】\n${text}`);
           }

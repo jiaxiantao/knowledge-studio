@@ -15,10 +15,15 @@ function requireDb() {
 
 const prisma = requireDb();
 
-async function ensureExtensions() {
-  const sqlPath = join(process.cwd(), "prisma/sql/extensions.sql");
+async function runSqlFile(relativePath: string) {
+  const sqlPath = join(process.cwd(), relativePath);
   const sql = readFileSync(sqlPath, "utf8");
   await prisma.$executeRawUnsafe(sql);
+}
+
+async function ensureExtensions() {
+  await runSqlFile("prisma/sql/extensions.sql");
+  await runSqlFile("prisma/sql/hybrid-search-indexes.sql");
 }
 
 async function ensureDefaultKnowledgeBase() {
@@ -41,7 +46,9 @@ async function ensureDefaultKnowledgeBase() {
 async function main() {
   await ensureExtensions();
   const kb = await ensureDefaultKnowledgeBase();
-  console.log(`Seeded knowledge base · kb=${kb.name} · vector: enabled`);
+  console.log(
+    `Seeded knowledge base · kb=${kb.name} · vector + pg_trgm: enabled`,
+  );
 }
 
 main()

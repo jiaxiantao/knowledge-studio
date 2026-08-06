@@ -11,7 +11,7 @@ export function ConsolePageTopBar({
   label: string;
 }) {
   return (
-    <div className="flex h-11 shrink-0 items-center border-b border-white/10">
+    <div className="flex h-11 shrink-0 items-center border-b border-white/10 bg-[#020617]">
       <Link
         href={href}
         className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"
@@ -35,9 +35,17 @@ export function ConsoleSubpageLayout({
   fullHeight?: boolean;
 }) {
   return (
-    <div className={fullHeight ? "flex h-full min-h-0 flex-col" : "flex flex-col"}>
+    <div className="flex h-full min-h-0 flex-col">
       <ConsolePageTopBar href={backHref} label={backLabel} />
-      <div className={fullHeight ? "min-h-0 flex-1 pt-4" : "pt-4"}>{children}</div>
+      <div
+        className={
+          fullHeight
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden pt-4"
+            : "min-h-0 flex-1 overflow-y-auto pt-4 [scrollbar-gutter:stable]"
+        }
+      >
+        {children}
+      </div>
     </div>
   );
 }

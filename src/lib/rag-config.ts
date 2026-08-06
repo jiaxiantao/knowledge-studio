@@ -36,6 +36,35 @@ export function getMinRetrievalScore() {
   return Math.min(Math.max(raw, 0), 1);
 }
 
+/** Keyword leg minimum trigram similarity (0–1). Lower than vector minScore. */
+export function getKeywordMinScore() {
+  const raw = Number(process.env.RAG_KEYWORD_MIN_SCORE ?? "0.12");
+  if (!Number.isFinite(raw)) {
+    return 0.12;
+  }
+  return Math.min(Math.max(raw, 0), 1);
+}
+
+/** Reciprocal rank fusion constant (default 60). */
+export function getHybridRrfK() {
+  const raw = Number(process.env.RAG_HYBRID_RRF_K ?? "60");
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 60;
+  }
+  return Math.floor(raw);
+}
+
+/** Hybrid retrieval (vector + pg_trgm keyword). Set RAG_HYBRID=0 to force vector-only. */
+export function isHybridRetrievalEnabled() {
+  const raw = process.env.RAG_HYBRID?.trim().toLowerCase();
+  if (!raw) {
+    return true;
+  }
+  return raw !== "0" && raw !== "false" && raw !== "off";
+}
+
+export type RetrievalMode = "hybrid" | "vector";
+
 const DEFAULT_MAX_UPLOAD_BYTES = ABSOLUTE_MAX_UPLOAD_BYTES;
 
 export function getMaxUploadBytes() {
@@ -78,13 +107,40 @@ export function getOcrLangs() {
     .filter(Boolean);
 }
 
-/** Max pages to OCR per PDF (default 40). */
+/** Max pages to OCR per PDF when fully scanned (default 1000, aligned with upload limit). */
 export function getOcrMaxPages() {
-  const raw = Number(process.env.PDF_OCR_MAX_PAGES ?? "40");
+  const raw = Number(process.env.PDF_OCR_MAX_PAGES ?? "1000");
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 1000;
+  }
+  return Math.min(Math.floor(raw), 1000);
+}
+
+/** Min chars on a page before triggering selective OCR supplement (default 40). */
+export function getPdfSparsePageCharThreshold() {
+  const raw = Number(process.env.PDF_SPARSE_PAGE_CHARS ?? "40");
   if (!Number.isFinite(raw) || raw <= 0) {
     return 40;
   }
-  return Math.min(Math.floor(raw), 200);
+  return Math.floor(raw);
+}
+
+/** Chunk size for RAG ingest (default 512, similar to Bailian smart chunking). */
+export function getChunkMaxChars() {
+  const raw = Number(process.env.RAG_CHUNK_MAX_CHARS ?? "512");
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 512;
+  }
+  return Math.min(Math.floor(raw), 2000);
+}
+
+/** Overlap between consecutive chunks (default 64). */
+export function getChunkOverlap() {
+  const raw = Number(process.env.RAG_CHUNK_OVERLAP ?? "64");
+  if (!Number.isFinite(raw) || raw < 0) {
+    return 64;
+  }
+  return Math.min(Math.floor(raw), 512);
 }
 
 /** Render scale for OCR (default 1.5). Higher = slower but clearer. */

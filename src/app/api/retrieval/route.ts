@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getEmbedModel, getMinRetrievalScore } from "@/lib/rag-config";
-import { searchChunksByVector } from "@/lib/vector-search";
+import { getEmbedModel, getKeywordMinScore, getMinRetrievalScore } from "@/lib/rag-config";
+import { searchChunks } from "@/lib/vector-search";
 
 const retrievalSchema = z.object({
   query: z.string().trim().min(1, "query is required"),
@@ -23,13 +23,13 @@ export async function POST(request: Request) {
     const embedModel = getEmbedModel();
 
     const started = Date.now();
-    const rawResults = await searchChunksByVector(
+    const { results, meta: searchMeta } = await searchChunks(
       body.query,
       topK,
       knowledgeBaseIds,
+      { minScore },
     );
     const latencyMs = Date.now() - started;
-    const results = rawResults.filter((hit) => hit.score >= minScore);
 
     return NextResponse.json({
       query: body.query,
@@ -39,9 +39,12 @@ export async function POST(request: Request) {
         latencyMs,
         topK,
         minScore,
+        keywordMinScore: getKeywordMinScore(),
         embedModel,
-        mode: "vector",
-        rawCount: rawResults.length,
+        mode: searchMeta.mode,
+        vectorCount: searchMeta.vectorCount,
+        keywordCount: searchMeta.keywordCount,
+        rawCount: searchMeta.vectorCount + searchMeta.keywordCount,
         hitCount: results.length,
         knowledgeBaseCount: knowledgeBaseIds?.length ?? 0,
       },

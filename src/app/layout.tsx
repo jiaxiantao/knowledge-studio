@@ -21,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
-      <body className="relative min-h-full flex flex-col bg-transparent">
+      <body className="relative flex h-full flex-col overflow-hidden bg-transparent">
         {children}
       </body>
     </html>

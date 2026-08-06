@@ -31,6 +31,7 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const file = form.get("file");
     const categoryRaw = form.get("category");
+    const chunkConfigRaw = form.get("chunkConfig");
     const knowledgeBaseIdRaw = form.get("knowledgeBaseId");
     const category =
       typeof categoryRaw === "string" && categoryRaw.trim()
@@ -57,10 +58,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: basics.error }, { status: 400 });
     }
 
+    let chunkConfig: unknown;
+    if (typeof chunkConfigRaw === "string" && chunkConfigRaw.trim()) {
+      try {
+        chunkConfig = JSON.parse(chunkConfigRaw) as unknown;
+      } catch {
+        return NextResponse.json(
+          { error: "chunkConfig 必须是合法 JSON" },
+          { status: 400 },
+        );
+      }
+    }
+
     const document = await createUploadedDocument(
       file,
       category,
       knowledgeBaseId,
+      chunkConfig,
     );
 
     after(() => {

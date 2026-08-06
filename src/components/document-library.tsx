@@ -13,9 +13,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useDocumentProgressStream } from "@/hooks/use-document-progress-stream";
 import {
   type DocumentRecord,
 } from "@/lib/documents-service";
+import { documentPreviewPath } from "@/lib/document-preview-path";
 import { isDocumentIngestStuck } from "@/lib/document-status";
 import { isStaticSite } from "@/lib/site-mode";
 
@@ -187,38 +189,23 @@ export function DocumentLibrary({
     return () => window.clearTimeout(timer);
   }, [loadDocuments]);
 
-  useEffect(() => {
-    if (staticSite) {
-      return;
-    }
+  const hasActiveProcessing = useMemo(
+    () => documents.some((doc) => isProcessing(doc.status)),
+    [documents],
+  );
 
-    const hasActive = documents.some((doc) => isProcessing(doc.status));
-    if (!hasActive) {
-      return;
-    }
+  const handleProgressDocument = useCallback(
+    (document: DocumentRecord) => {
+      mergeDocuments([document]);
+    },
+    [mergeDocuments],
+  );
 
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const response = await fetch(
-          `/api/documents?knowledgeBaseId=${encodeURIComponent(knowledgeBaseId)}`,
-          { cache: "no-store" },
-        );
-          if (!response.ok) {
-            return;
-          }
-          const payload = (await response.json()) as {
-            documents?: DocumentRecord[];
-          };
-          setDocuments(payload.documents ?? []);
-        } catch {
-          // ignore transient poll errors
-        }
-      })();
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [documents, knowledgeBaseId, staticSite]);
+  useDocumentProgressStream({
+    knowledgeBaseId,
+    enabled: !staticSite && hasActiveProcessing,
+    onDocument: handleProgressDocument,
+  });
 
   async function confirmDelete() {
     if (staticSite || !pendingDelete) {
@@ -405,101 +392,104 @@ export function DocumentLibrary({
   const colSpan = batchMode ? 7 : 6;
 
   return (
-    <div className="grid gap-4">
-      {staticSite ? <StaticSiteNotice feature="文档上传与索引" /> : null}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 space-y-4 bg-[#020617] pb-4">
+        {staticSite ? <StaticSiteNotice feature="文档上传与索引" /> : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="按文件名搜索"
-          className="min-w-[200px] flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/40"
-        />
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void loadDocuments()}
-            className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
-          >
-            刷新
-          </button>
-          {!staticSite ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (batchMode) {
-                  exitBatchMode();
-                } else {
-                  setBatchMode(true);
-                }
-              }}
-              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
-            >
-              {batchMode ? "退出批量操作" : "批量操作"}
-            </button>
-          ) : null}
-          {staticSite ? (
-            <button
-              type="button"
-              disabled
-              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
-            >
-              + 上传数据
-            </button>
-          ) : (
-            <Link
-              href={`/knowledge/upload?kb=${encodeURIComponent(knowledgeBaseId)}`}
-              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950"
-            >
-              + 上传数据
-            </Link>
-          )}
-        </div>
-      </div>
-
-      {batchMode ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 px-4 py-3 text-sm">
-          <div className="flex flex-wrap items-center gap-3 text-slate-300">
-            <span>已选 {selectedCount} 项</span>
-            <button
-              type="button"
-              onClick={() => setSelectedIds([])}
-              disabled={!selectedCount}
-              className="text-slate-400 transition hover:text-white disabled:opacity-40"
-            >
-              取消选择
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="按文件名搜索"
+            className="min-w-[200px] flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/40"
+          />
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={!selectedCount || retrying || deleting}
-              onClick={() => void handleBatchRetry()}
-              className="rounded-xl border border-white/10 px-3 py-1.5 text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-40"
+              onClick={() => void loadDocuments()}
+              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
             >
-              {retrying ? "排队中…" : "批量重试解析"}
+              刷新
             </button>
-            <button
-              type="button"
-              disabled={!selectedCount || retrying || deleting}
-              onClick={() =>
-                setPendingDelete({ type: "batch", ids: [...validSelectedIds] })
-              }
-              className="rounded-xl border border-rose-300/30 px-3 py-1.5 text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40"
-            >
-              批量删除
-            </button>
+            {!staticSite ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (batchMode) {
+                    exitBatchMode();
+                  } else {
+                    setBatchMode(true);
+                  }
+                }}
+                className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
+              >
+                {batchMode ? "退出批量操作" : "批量操作"}
+              </button>
+            ) : null}
+            {staticSite ? (
+              <button
+                type="button"
+                disabled
+                className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+              >
+                + 上传数据
+              </button>
+            ) : (
+              <Link
+                href={`/knowledge/upload?kb=${encodeURIComponent(knowledgeBaseId)}`}
+                className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950"
+              >
+                + 上传数据
+              </Link>
+            )}
           </div>
         </div>
-      ) : null}
 
-      {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-          {error}
-        </div>
-      ) : null}
+        {batchMode ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 text-slate-300">
+              <span>已选 {selectedCount} 项</span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                disabled={!selectedCount}
+                className="text-slate-400 transition hover:text-white disabled:opacity-40"
+              >
+                取消选择
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!selectedCount || retrying || deleting}
+                onClick={() => void handleBatchRetry()}
+                className="rounded-xl border border-white/10 px-3 py-1.5 text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-40"
+              >
+                {retrying ? "排队中…" : "批量重试解析"}
+              </button>
+              <button
+                type="button"
+                disabled={!selectedCount || retrying || deleting}
+                onClick={() =>
+                  setPendingDelete({ type: "batch", ids: [...validSelectedIds] })
+                }
+                className="rounded-xl border border-rose-300/30 px-3 py-1.5 text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40"
+              >
+                批量删除
+              </button>
+            </div>
+          </div>
+        ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
+        {error ? (
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto [scrollbar-gutter:stable]">
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-white/10 text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -575,15 +565,13 @@ export function DocumentLibrary({
                           </span>
                           <CopyDocumentIdButton id={doc.id} />
                           {!staticSite ? (
-                            <a
-                              href={`/api/documents/${doc.id}/file`}
-                              target="_blank"
-                              rel="noreferrer"
+                            <Link
+                              href={documentPreviewPath(doc.id, knowledgeBaseId)}
                               className="inline-flex items-center gap-1 text-cyan-200/90 transition hover:text-cyan-100"
                             >
-                              本地文件
+                              预览
                               <ExternalLink className="h-3 w-3" />
-                            </a>
+                            </Link>
                           ) : null}
                         </div>
                         {doc.errorMessage ? (
@@ -684,6 +672,7 @@ export function DocumentLibrary({
           }}
         />
       ) : null}
+      </div>
 
       <Dialog
         open={Boolean(pendingDelete)}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Check,
   Copy,
@@ -28,6 +29,7 @@ import {
   type ChunkRecord,
 } from "@/lib/chunk-types";
 import type { DocumentRecord } from "@/lib/documents-service";
+import { documentPreviewPath } from "@/lib/document-preview-path";
 import { isStaticSite } from "@/lib/site-mode";
 
 type EditorMode = "create" | "edit";
@@ -100,6 +102,7 @@ function SliceToggle({
 
 export function DocumentChunksView({
   id,
+  knowledgeBaseId,
 }: {
   id: string;
   knowledgeBaseId?: string;
@@ -321,59 +324,74 @@ export function DocumentChunksView({
   }
 
   return (
-    <div className="grid gap-4">
-      {staticSite ? <StaticSiteNotice feature="切片详情" /> : null}
-      {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-          {error}
-        </div>
-      ) : null}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 space-y-4 bg-[#020617] pb-4">
+        {staticSite ? <StaticSiteNotice feature="切片详情" /> : null}
+        {error ? (
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative min-w-[14rem] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            placeholder="搜索切片"
-            className="w-full rounded-xl border border-white/10 bg-slate-950/70 py-2.5 pl-9 pr-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-300/40"
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[14rem] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <input
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              placeholder="搜索切片"
+              className="w-full rounded-xl border border-white/10 bg-slate-950/70 py-2.5 pl-9 pr-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-300/40"
+            />
+          </div>
+          <p className="text-sm text-slate-400">共 {filteredChunks.length} 个切片</p>
+          <button
+            type="button"
+            onClick={openCreate}
+            disabled={staticSite || !document}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/95 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            创建切片
+          </button>
         </div>
-        <p className="text-sm text-slate-400">共 {filteredChunks.length} 个切片</p>
-        <button
-          type="button"
-          onClick={openCreate}
-          disabled={staticSite || !document}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/95 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          创建切片
-        </button>
+
+        {document ? (
+          <p className="text-sm text-slate-400">
+            {document.name} · {chunks.length} 个切片
+          </p>
+        ) : null}
       </div>
 
-      {document ? (
-        <p className="text-sm text-slate-400">
-          {document.name} · {chunks.length} 个切片
-        </p>
-      ) : null}
-
-      {loading ? (
-        <div className="rounded-2xl border border-white/10 px-4 py-8 text-sm text-slate-500">
-          正在加载切片…
-        </div>
-      ) : pagedChunks.length ? (
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+        {loading ? (
+          <div className="rounded-2xl border border-white/10 px-4 py-8 text-sm text-slate-500">
+            正在加载切片…
+          </div>
+        ) : pagedChunks.length ? (
         <>
-          <div className="grid gap-4">
+          <div className="grid gap-4 pb-1 pt-1">
             {pagedChunks.map((chunk) => (
               <article
                 key={chunk.id}
                 className="group relative rounded-2xl border border-white/10 bg-slate-950/40 p-5 transition hover:border-white/20"
               >
-                <div className="pointer-events-none absolute right-4 top-0 z-10 -translate-y-1/2 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100">
-                  <div className="flex items-center gap-1 rounded-full border border-white/10 bg-slate-900/95 px-1.5 py-1 shadow-[0_12px_32px_rgba(0,0,0,0.45)] backdrop-blur">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-white/10 bg-white/5 px-1.5 font-medium text-slate-300">
+                      {chunk.index + 1}
+                    </span>
+                    <span>{chunk.content.length} 字符</span>
+                    {!chunk.enabled ? (
+                      <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-1.5 py-0.5 text-amber-100">
+                        已停用
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-slate-900/95 px-1.5 py-1 opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.45)] backdrop-blur transition group-hover:opacity-100 group-focus-within:opacity-100">
                     <button
                       type="button"
                       onClick={() => openEdit(chunk)}
@@ -382,15 +400,13 @@ export function DocumentChunksView({
                       <LayoutPanelLeft className="h-3.5 w-3.5" />
                       切片详情
                     </button>
-                    <a
-                      href={`/api/documents/${id}/file`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <Link
+                      href={documentPreviewPath(id, knowledgeBaseId)}
                       className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
                     >
                       <Eye className="h-3.5 w-3.5" />
                       查看原文
-                    </a>
+                    </Link>
                     <button
                       type="button"
                       onClick={() => setDeleteTarget(chunk)}
@@ -410,22 +426,10 @@ export function DocumentChunksView({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-white/10 bg-white/5 px-1.5 font-medium text-slate-300">
-                    {chunk.index + 1}
-                  </span>
-                  <span>{chunk.content.length} 字符</span>
-                  {!chunk.enabled ? (
-                    <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-1.5 py-0.5 text-amber-100">
-                      已停用
-                    </span>
-                  ) : null}
-                </div>
-
                 <button
                   type="button"
                   onClick={() => openEdit(chunk)}
-                  className="mt-3 w-full text-left"
+                  className="w-full text-left"
                 >
                   {chunk.title ? (
                     <h3 className="text-sm font-semibold text-white">
@@ -482,7 +486,8 @@ export function DocumentChunksView({
             </button>
           ) : null}
         </div>
-      )}
+        )}
+      </div>
 
       <Dialog
         open={Boolean(editor)}

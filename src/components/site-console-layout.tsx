@@ -8,9 +8,11 @@ export function SiteConsoleLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/knowledge";
 
   return (
-    <div className="flex min-h-screen text-foreground">
+    <div className="flex h-screen overflow-hidden text-foreground">
       <ConsoleSidebar activePath={pathname} />
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {children}
+      </div>
     </div>
   );
 }

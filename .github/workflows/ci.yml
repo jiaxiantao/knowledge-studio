@@ -78,6 +78,7 @@ jobs:
             const client = new Client({ connectionString: process.env.DATABASE_URL });
             client.connect()
               .then(() => client.query('CREATE EXTENSION IF NOT EXISTS vector;'))
+              .then(() => client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;'))
               .then(() => client.end())
               .catch((error) => { console.error(error); process.exit(1); });
           "

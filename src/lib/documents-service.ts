@@ -7,8 +7,10 @@ import type { Document, DocumentFormat, KnowledgeBase } from "@prisma/client";
 import {
   deriveChunkTitle,
   estimateTokens,
-  splitIntoChunks,
+  splitTextByConfig,
 } from "@/lib/chunking";
+import { parseChunkConfig } from "@/lib/chunk-config";
+import { publishDocumentProgress } from "@/lib/document-progress-events";
 import {
   CHUNK_CONTENT_MAX,
   CHUNK_TITLE_MAX,
@@ -17,6 +19,7 @@ import {
 import { getReadyDb } from "@/lib/db";
 import { extractTextFromFile } from "@/lib/document-ingest";
 import { embedText, toPgVectorLiteral } from "@/lib/embeddings";
+import { prepareTextForChunking } from "@/lib/text-normalize";
 import { getUploadDir } from "@/lib/rag-config";
 import { isDocumentIngestStuck } from "@/lib/document-status";
 import {
@@ -406,6 +409,7 @@ export async function createUploadedDocument(
   file: File,
   category = "默认类目",
   knowledgeBaseId?: string,
+  chunkConfigRaw?: unknown,
 ) {
   const db = await getReadyDb();
   if (!db) {
@@ -456,6 +460,8 @@ export async function createUploadedDocument(
     update: {},
   });
 
+  const chunkConfig = parseChunkConfig(chunkConfigRaw);
+
   const document = await db.document.create({
     data: {
       knowledgeBaseId: kb.id,
@@ -465,12 +471,15 @@ export async function createUploadedDocument(
       status: "pending",
       progress: 5,
       category: categoryName,
+      chunkConfig: chunkConfig as object,
       storageKey: saved.storageKey,
     },
     include: { _count: { select: { chunks: true } } },
   });
 
-  return mapDocument(document);
+  const mapped = mapDocument(document);
+  publishDocumentProgress(mapped);
+  return mapped;
 }
 
 async function setDocumentProgress(
@@ -487,11 +496,17 @@ async function setDocumentProgress(
     return null;
   }
 
-  return db.document.update({
+  const updated = await db.document.update({
     where: { id },
     data,
     include: { _count: { select: { chunks: true } } },
   });
+
+  if (updated) {
+    publishDocumentProgress(mapDocument(updated));
+  }
+
+  return updated;
 }
 
 export async function processDocumentIngest(documentId: string) {
@@ -542,7 +557,13 @@ export async function processDocumentIngest(documentId: string) {
 
     await setDocumentProgress(documentId, { progress: 30 });
 
-    const pieces = splitIntoChunks(text);
+    const prepared = prepareTextForChunking(text, document.format);
+    if (!prepared) {
+      throw new Error("清洗后的文本为空，请检查原文件是否为可解析的文字版 PDF");
+    }
+
+    const chunkConfig = parseChunkConfig(document.chunkConfig);
+    const pieces = splitTextByConfig(prepared, chunkConfig);
     if (!pieces.length) {
       throw new Error("切片结果为空");
     }

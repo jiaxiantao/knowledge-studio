@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { StaticSiteNotice } from "@/components/static-site-notice";
+import { ChunkIndexSettings } from "@/components/chunk-index-settings";
 import { DarkSelect } from "@/components/ui/dark-select";
 import {
   Dialog,
@@ -21,6 +22,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DEFAULT_CHUNK_CONFIG,
+  serializeChunkConfig,
+  type ChunkConfig,
+} from "@/lib/chunk-config";
 import { isStaticSite } from "@/lib/site-mode";
 import {
   MAX_UPLOAD_FILES,
@@ -114,6 +120,10 @@ export function DocumentUploadForm({
   const fileRef = useRef<HTMLInputElement>(null);
   const staticSite = isStaticSite();
 
+  const [uploadStep, setUploadStep] = useState<1 | 2>(1);
+  const [chunkConfig, setChunkConfig] = useState<ChunkConfig>({
+    ...DEFAULT_CHUNK_CONFIG,
+  });
   const [categories, setCategories] = useState<CategoryOption[]>([
     { id: "default", name: DEFAULT_CATEGORY },
   ]);
@@ -428,6 +438,7 @@ export function DocumentUploadForm({
         form.append("file", item.file);
         form.append("category", category.trim() || DEFAULT_CATEGORY);
         form.append("knowledgeBaseId", knowledgeBaseId);
+        form.append("chunkConfig", serializeChunkConfig(chunkConfig));
 
         const response = await fetch("/api/documents", {
           method: "POST",
@@ -483,21 +494,39 @@ export function DocumentUploadForm({
   return (
     <div className="grid gap-5">
       <div className="flex items-center gap-3 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-semibold text-slate-950">
-            1
+        <div
+          className={`flex items-center gap-2 ${uploadStep === 1 ? "text-white" : "text-slate-400"}`}
+        >
+          <span
+            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
+              uploadStep === 1
+                ? "bg-white text-slate-950"
+                : "border border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
+            }`}
+          >
+            {uploadStep > 1 ? "✓" : "1"}
           </span>
-          <span className="text-white">选择数据</span>
+          <span>选择数据</span>
         </div>
         <span className="h-px w-8 bg-white/15" />
-        <div className="flex items-center gap-2 text-slate-500">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/15 text-xs">
+        <div
+          className={`flex items-center gap-2 ${uploadStep === 2 ? "text-white" : "text-slate-500"}`}
+        >
+          <span
+            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${
+              uploadStep === 2
+                ? "bg-white font-semibold text-slate-950"
+                : "border border-white/15"
+            }`}
+          >
             2
           </span>
-          <span>上传并解析</span>
+          <span>索引设置</span>
         </div>
       </div>
 
+      {uploadStep === 1 ? (
+        <>
       <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -767,29 +796,27 @@ export function DocumentUploadForm({
       <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
         <p className="text-sm font-medium text-white">解析说明</p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-6 text-slate-400">
-          <li>上传后文档会立即出现在知识库列表，状态显示解析进度。</li>
-          <li>文本会按规则切片，并通过本地 embedding 模型写入 pgvector。</li>
-          <li>
-            扫描件 / 图片型 PDF（无可复制文字）会自动走 OCR（较慢，首次需加载中文语言包）。
-          </li>
+          <li>下一步可配置切片方式与最大分段长度（对齐百炼索引设置）。</li>
+          <li>PDF 会逐页提取文字；低质量页自动 OCR 补全。</li>
           <li>解析完成后可在列表中查看切片，或直接用于知识检索 / 问答。</li>
         </ul>
       </section>
 
-      {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm leading-7 text-rose-100">
-          {error}
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          disabled={!files.length || uploading}
-          onClick={() => void handleSubmit()}
+          disabled={
+            !files.some(
+              (item) => item.status === "pending" || item.status === "done",
+            )
+          }
+          onClick={() => {
+            setError(null);
+            setUploadStep(2);
+          }}
           className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
         >
-          {uploading ? "上传解析中…" : "开始上传"}
+          下一步：索引设置
         </button>
         <Link
           href={`/knowledge/documents?kb=${encodeURIComponent(knowledgeBaseId)}`}
@@ -798,6 +825,52 @@ export function DocumentUploadForm({
           取消
         </Link>
       </div>
+        </>
+      ) : (
+        <>
+          <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+            <ChunkIndexSettings value={chunkConfig} onChange={setChunkConfig} />
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+            <p className="text-sm font-medium text-white">待上传文件</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {files.filter((item) => item.status !== "error").length} 个文件将按上方配置切片入库
+            </p>
+          </section>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => setUploadStep(1)}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 hover:text-white disabled:opacity-50"
+            >
+              上一步
+            </button>
+            <button
+              type="button"
+              disabled={!files.length || uploading}
+              onClick={() => void handleSubmit()}
+              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+            >
+              {uploading ? "上传解析中…" : "完成上传"}
+            </button>
+            <Link
+              href={`/knowledge/documents?kb=${encodeURIComponent(knowledgeBaseId)}`}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 hover:text-white"
+            >
+              取消
+            </Link>
+          </div>
+        </>
+      )}
+
+      {error ? (
+        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm leading-7 text-rose-100">
+          {error}
+        </div>
+      ) : null}
 
       <Dialog
         open={Boolean(pendingDeleteCategory)}

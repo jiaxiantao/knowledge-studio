@@ -41,8 +41,11 @@ type RetrievalMeta = {
   latencyMs: number;
   topK: number;
   minScore: number;
+  keywordMinScore?: number;
   embedModel: string;
   mode: string;
+  vectorCount?: number;
+  keywordCount?: number;
   rawCount: number;
   hitCount: number;
   knowledgeBaseCount: number;
@@ -476,7 +479,7 @@ export function RetrievalWorkbench({
       <section className="flex min-w-0 flex-1 flex-col bg-slate-900/35">
         {staticSite ? (
           <div className="border-b border-white/10 p-4">
-            <StaticSiteNotice feature="向量检索" />
+            <StaticSiteNotice feature="检索" />
           </div>
         ) : null}
 
@@ -512,6 +515,25 @@ export function RetrievalWorkbench({
                   {meta.minScore.toFixed(2)}
                 </strong>
               </span>
+              <span>
+                模式{" "}
+                <strong className="font-mono text-slate-200">
+                  {meta.mode === "hybrid" ? "混合检索" : "向量"}
+                </strong>
+              </span>
+              {meta.mode === "hybrid" ? (
+                <span>
+                  召回{" "}
+                  <strong className="font-mono text-slate-200">
+                    {meta.vectorCount ?? 0}
+                  </strong>
+                  <span className="text-slate-600"> vec + </span>
+                  <strong className="font-mono text-slate-200">
+                    {meta.keywordCount ?? 0}
+                  </strong>
+                  <span className="text-slate-600"> kw</span>
+                </span>
+              ) : null}
               <span>
                 知识库{" "}
                 <strong className="font-mono text-slate-200">

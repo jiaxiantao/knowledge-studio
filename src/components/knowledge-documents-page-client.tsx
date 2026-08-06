@@ -42,30 +42,36 @@ function KnowledgeDocumentsPageInner() {
   }
 
   return (
-    <ConsoleSubpageLayout backHref="/knowledge" backLabel="返回知识库列表">
-      <div className="grid gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-              知识库
-            </p>
-            <h2 className="mt-1 text-xl font-semibold text-white">
-              {knowledgeBaseName}
-            </h2>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href={`/retrieval/workbench?kb=${encodeURIComponent(knowledgeBaseId)}`}
-              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
-            >
-              知识检索
-            </Link>
-            <Link
-              href={`/assistant/chat?kb=${encodeURIComponent(knowledgeBaseId)}`}
-              className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-950"
-            >
-              知识问答
-            </Link>
+    <ConsoleSubpageLayout
+      backHref="/knowledge"
+      backLabel="返回知识库列表"
+      fullHeight
+    >
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="shrink-0 space-y-4 bg-[#020617] pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                知识库
+              </p>
+              <h2 className="mt-1 text-xl font-semibold text-white">
+                {knowledgeBaseName}
+              </h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/retrieval/workbench?kb=${encodeURIComponent(knowledgeBaseId)}`}
+                className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white"
+              >
+                知识检索
+              </Link>
+              <Link
+                href={`/assistant/chat?kb=${encodeURIComponent(knowledgeBaseId)}`}
+                className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-950"
+              >
+                知识问答
+              </Link>
+            </div>
           </div>
         </div>
         <DocumentLibrary knowledgeBaseId={knowledgeBaseId} />
