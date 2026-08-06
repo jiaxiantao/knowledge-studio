@@ -11,6 +11,7 @@ export type ChatMessageReference = {
   slug: string;
   summary: string | null;
   knowledgeBaseId?: string;
+  knowledgeBaseName?: string;
   score?: number;
   similarity?: number;
 };

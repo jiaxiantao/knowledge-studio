@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   FileText,
+  Pencil,
   Plus,
   RefreshCw,
   Trash2,
@@ -13,6 +14,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { StaticSiteNotice } from "@/components/static-site-notice";
 import { DarkSelect } from "@/components/ui/dark-select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { isStaticSite } from "@/lib/site-mode";
 import {
   MAX_UPLOAD_FILES,
@@ -21,6 +29,11 @@ import {
 } from "@/lib/upload-rules";
 
 const DEFAULT_CATEGORY = "默认类目";
+
+type CategoryOption = {
+  id: string;
+  name: string;
+};
 
 type PendingFile = {
   id: string;
@@ -101,10 +114,16 @@ export function DocumentUploadForm({
   const fileRef = useRef<HTMLInputElement>(null);
   const staticSite = isStaticSite();
 
-  const [categories, setCategories] = useState<string[]>([DEFAULT_CATEGORY]);
+  const [categories, setCategories] = useState<CategoryOption[]>([
+    { id: "default", name: DEFAULT_CATEGORY },
+  ]);
   const [category, setCategory] = useState(DEFAULT_CATEGORY);
   const [newCategory, setNewCategory] = useState("");
   const [showAddCategory, setShowAddCategory] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
+    null,
+  );
+  const [editCategoryName, setEditCategoryName] = useState("");
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -112,6 +131,9 @@ export function DocumentUploadForm({
   const [loadingCategories, setLoadingCategories] = useState(!staticSite);
 
   const [addingCategory, setAddingCategory] = useState(false);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [pendingDeleteCategory, setPendingDeleteCategory] =
+    useState<CategoryOption | null>(null);
 
   const loadCategories = useCallback(async () => {
     if (staticSite) {
@@ -125,21 +147,28 @@ export function DocumentUploadForm({
         { cache: "no-store" },
       );
       const payload = (await response.json()) as {
-        categories?: Array<{ name: string }>;
+        categories?: Array<{ id: string; name: string }>;
         error?: string;
       };
       if (!response.ok) {
         throw new Error(payload.error ?? "加载类目失败");
       }
-      const names = (payload.categories ?? [])
-        .map((item) => item.name.trim())
-        .filter(Boolean);
+      const next = (payload.categories ?? [])
+        .map((item) => ({
+          id: item.id,
+          name: item.name.trim(),
+        }))
+        .filter((item) => item.id && item.name);
       setCategories(
-        names.length ? names : [DEFAULT_CATEGORY],
+        next.length ? next : [{ id: "default", name: DEFAULT_CATEGORY }],
       );
       setCategory((current) =>
-        names.includes(current) ? current : names[0] ?? DEFAULT_CATEGORY,
+        next.some((item) => item.name === current)
+          ? current
+          : next[0]?.name ?? DEFAULT_CATEGORY,
       );
+      setEditingCategoryId(null);
+      setEditCategoryName("");
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "加载类目失败",
@@ -222,7 +251,7 @@ export function DocumentUploadForm({
         body: JSON.stringify({ name, knowledgeBaseId }),
       });
       const payload = (await response.json()) as {
-        category?: { name: string };
+        category?: { id: string; name: string };
         error?: string;
       };
 
@@ -230,20 +259,135 @@ export function DocumentUploadForm({
         throw new Error(payload.error ?? "新增类目失败");
       }
 
-      setCategories((current) =>
-        current.includes(payload.category!.name)
-          ? current
-          : [...current, payload.category!.name].sort((a, b) =>
-              a.localeCompare(b, "zh-CN"),
-            ),
-      );
-      setCategory(payload.category.name);
+      const created = {
+        id: payload.category.id,
+        name: payload.category.name,
+      };
+      setCategories((current) => {
+        if (current.some((item) => item.id === created.id)) {
+          return current;
+        }
+        return [...current, created].sort((a, b) =>
+          a.name.localeCompare(b.name, "zh-CN"),
+        );
+      });
+      setCategory(created.name);
       setNewCategory("");
       setShowAddCategory(false);
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "新增类目失败");
     } finally {
       setAddingCategory(false);
+    }
+  }
+
+  function startEditCategory(item: CategoryOption) {
+    if (item.name === DEFAULT_CATEGORY) {
+      setError("默认类目不可修改");
+      return;
+    }
+    setShowAddCategory(false);
+    setEditingCategoryId(item.id);
+    setEditCategoryName(item.name);
+    setError(null);
+  }
+
+  async function handleRenameCategory() {
+    if (!editingCategoryId || savingCategory) {
+      return;
+    }
+    const name = editCategoryName.trim();
+    if (!name) {
+      setError("类目名称不能为空");
+      return;
+    }
+
+    setSavingCategory(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/categories/${editingCategoryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const payload = (await response.json()) as {
+        category?: { id: string; name: string };
+        error?: string;
+      };
+      if (!response.ok || !payload.category) {
+        throw new Error(payload.error ?? "修改类目失败");
+      }
+
+      const renamed = {
+        id: payload.category.id,
+        name: payload.category.name,
+      };
+      setCategories((current) =>
+        current
+          .map((item) => (item.id === renamed.id ? renamed : item))
+          .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
+      );
+      setCategory((current) => {
+        const previous = categories.find((item) => item.id === renamed.id);
+        return previous && previous.name === current ? renamed.name : current;
+      });
+      setEditingCategoryId(null);
+      setEditCategoryName("");
+    } catch (renameError) {
+      setError(
+        renameError instanceof Error ? renameError.message : "修改类目失败",
+      );
+    } finally {
+      setSavingCategory(false);
+    }
+  }
+
+  function requestDeleteCategory(item: CategoryOption) {
+    if (item.name === DEFAULT_CATEGORY) {
+      setError("默认类目不可删除");
+      return;
+    }
+    if (savingCategory) {
+      return;
+    }
+    setError(null);
+    setPendingDeleteCategory(item);
+  }
+
+  async function confirmDeleteCategory() {
+    const item = pendingDeleteCategory;
+    if (!item || savingCategory) {
+      return;
+    }
+
+    setSavingCategory(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/categories/${item.id}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "删除类目失败");
+      }
+
+      setCategories((current) =>
+        current.filter((entry) => entry.id !== item.id),
+      );
+      setCategory((current) =>
+        current === item.name ? DEFAULT_CATEGORY : current,
+      );
+      if (editingCategoryId === item.id) {
+        setEditingCategoryId(null);
+        setEditCategoryName("");
+      }
+      setPendingDeleteCategory(null);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "删除类目失败",
+      );
+    } finally {
+      setSavingCategory(false);
     }
   }
 
@@ -367,7 +511,11 @@ export function DocumentUploadForm({
           </div>
           <button
             type="button"
-            onClick={() => setShowAddCategory((open) => !open)}
+            onClick={() => {
+              setEditingCategoryId(null);
+              setEditCategoryName("");
+              setShowAddCategory((open) => !open);
+            }}
             className="inline-flex items-center gap-1 text-sm text-cyan-200 hover:text-cyan-100"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -380,10 +528,59 @@ export function DocumentUploadForm({
             value={category}
             onChange={setCategory}
             options={categories.map((item) => ({
-              value: item,
-              label: item,
+              value: item.name,
+              label: item.name,
             }))}
             placeholder="选择类目"
+            className="min-w-[16rem] w-72 max-w-full"
+            renderOptionActions={(option, { close }) => {
+              const item = categories.find(
+                (entry) => entry.name === option.value,
+              );
+              if (!item || item.name === DEFAULT_CATEGORY) {
+                return null;
+              }
+              return (
+                <>
+                  <button
+                    type="button"
+                    title="修改类目"
+                    disabled={savingCategory}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      close();
+                      startEditCategory(item);
+                    }}
+                    className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-cyan-200 disabled:opacity-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="删除类目"
+                    disabled={savingCategory}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      close();
+                      requestDeleteCategory(item);
+                    }}
+                    className="rounded-md p-1.5 text-slate-400 hover:bg-rose-400/10 hover:text-rose-200 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              );
+            }}
           />
           <button
             type="button"
@@ -413,6 +610,36 @@ export function DocumentUploadForm({
               className="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-950 disabled:opacity-50"
             >
               {addingCategory ? "保存中…" : "添加"}
+            </button>
+          </div>
+        ) : null}
+
+        {editingCategoryId ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <input
+              value={editCategoryName}
+              onChange={(event) => setEditCategoryName(event.target.value)}
+              placeholder="输入新的类目名称"
+              className="min-w-[16rem] flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/40"
+            />
+            <button
+              type="button"
+              disabled={savingCategory || !editCategoryName.trim()}
+              onClick={() => void handleRenameCategory()}
+              className="rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-950 disabled:opacity-50"
+            >
+              {savingCategory ? "保存中…" : "保存修改"}
+            </button>
+            <button
+              type="button"
+              disabled={savingCategory}
+              onClick={() => {
+                setEditingCategoryId(null);
+                setEditCategoryName("");
+              }}
+              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:text-white disabled:opacity-50"
+            >
+              取消
             </button>
           </div>
         ) : null}
@@ -571,6 +798,50 @@ export function DocumentUploadForm({
           取消
         </Link>
       </div>
+
+      <Dialog
+        open={Boolean(pendingDeleteCategory)}
+        onOpenChange={(open) => {
+          if (!open && !savingCategory) {
+            setPendingDeleteCategory(null);
+          }
+        }}
+      >
+        <DialogContent
+          onClose={() => {
+            if (!savingCategory) {
+              setPendingDeleteCategory(null);
+            }
+          }}
+          className="max-w-md"
+        >
+          <DialogHeader>
+            <DialogTitle>删除类目</DialogTitle>
+            <DialogDescription>
+              确定删除类目「{pendingDeleteCategory?.name}」？该类目下的文档将归入「
+              {DEFAULT_CATEGORY}」。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={savingCategory}
+              onClick={() => setPendingDeleteCategory(null)}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 hover:text-white disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={savingCategory}
+              onClick={() => void confirmDeleteCategory()}
+              className="rounded-xl bg-rose-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-rose-300 disabled:opacity-50"
+            >
+              {savingCategory ? "删除中…" : "确认删除"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -6,6 +6,7 @@ export type ChatReference = {
   slug: string;
   summary: string | null;
   knowledgeBaseId?: string;
+  knowledgeBaseName?: string;
   tags: string[];
   score?: number;
   similarity?: number;
@@ -16,6 +17,7 @@ export type StreamChatOptions = {
   regenerate?: boolean;
   temperature?: number;
   knowledgeBaseId?: string;
+  knowledgeBaseIds?: string[];
   history?: ChatHistoryTurn[];
 };
 
@@ -86,6 +88,7 @@ export async function streamChatQuestion(
       regenerate: options.regenerate,
       temperature: options.temperature,
       knowledgeBaseId: options.knowledgeBaseId,
+      knowledgeBaseIds: options.knowledgeBaseIds,
       history: options.history,
     }),
   });

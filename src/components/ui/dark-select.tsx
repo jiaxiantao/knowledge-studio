@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
 type DarkSelectOption = {
@@ -15,6 +16,10 @@ type DarkSelectProps = {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  renderOptionActions?: (
+    option: DarkSelectOption,
+    helpers: { close: () => void },
+  ) => ReactNode;
 };
 
 export function DarkSelect({
@@ -24,6 +29,7 @@ export function DarkSelect({
   placeholder = "请选择",
   className = "",
   disabled = false,
+  renderOptionActions,
 }: DarkSelectProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -64,9 +70,12 @@ export function DarkSelect({
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-left text-sm text-slate-100 transition hover:border-white/20 hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-left text-sm text-slate-100 transition hover:border-white/20 hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <span className={selected ? "text-slate-100" : "text-slate-500"}>
+        <span
+          className={`min-w-0 flex-1 truncate ${selected ? "text-slate-100" : "text-slate-500"}`}
+          title={selected?.label}
+        >
           {selected?.label ?? placeholder}
         </span>
         <ChevronDown
@@ -78,28 +87,46 @@ export function DarkSelect({
         <ul
           id={listId}
           role="listbox"
-          className="absolute left-0 top-full z-30 mt-1.5 max-h-60 w-full overflow-auto rounded-xl border border-white/10 bg-slate-950 py-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]"
+          className="absolute left-0 top-full z-30 mt-1.5 max-h-60 w-full min-w-full overflow-auto rounded-xl border border-white/10 bg-slate-950 py-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]"
         >
           {options.length ? (
             options.map((option) => {
               const isSelected = option.value === value;
+              const actions = renderOptionActions?.(option, {
+                close: () => setOpen(false),
+              });
               return (
                 <li key={option.value} role="option" aria-selected={isSelected}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onChange(option.value);
-                      setOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition ${
-                      isSelected
-                        ? "bg-cyan-300/10 text-cyan-100"
-                        : "text-slate-300 hover:bg-white/5 hover:text-white"
+                  <div
+                    className={`flex w-full items-center gap-1 px-1.5 py-0.5 ${
+                      isSelected ? "bg-cyan-300/10" : ""
                     }`}
                   >
-                    <span className="truncate">{option.label}</span>
-                    {isSelected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onChange(option.value);
+                        setOpen(false);
+                      }}
+                      className={`flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left text-sm transition ${
+                        isSelected
+                          ? "text-cyan-100"
+                          : "text-slate-300 hover:bg-white/5 hover:text-white"
+                      }`}
+                    >
+                      <span className="truncate" title={option.label}>
+                        {option.label}
+                      </span>
+                      {isSelected && !actions ? (
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                      ) : null}
+                    </button>
+                    {actions ? (
+                      <div className="relative z-10 flex shrink-0 items-center gap-0.5 pr-1">
+                        {actions}
+                      </div>
+                    ) : null}
+                  </div>
                 </li>
               );
             })

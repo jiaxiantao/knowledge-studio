@@ -22,14 +22,37 @@ const historyTurnSchema = z.object({
   content: z.string().trim().min(1).max(8000),
 });
 
-const chatSchema = z.object({
-  question: z.string().min(1, "Question is required"),
-  stream: z.boolean().optional(),
-  regenerate: z.boolean().optional(),
-  temperature: z.number().min(0).max(1).optional(),
-  knowledgeBaseId: z.string().trim().min(1).optional(),
-  history: z.array(historyTurnSchema).max(12).optional(),
-});
+const chatSchema = z
+  .object({
+    question: z.string().min(1, "Question is required"),
+    stream: z.boolean().optional(),
+    regenerate: z.boolean().optional(),
+    temperature: z.number().min(0).max(1).optional(),
+    knowledgeBaseId: z.string().trim().min(1).optional(),
+    knowledgeBaseIds: z.array(z.string().trim().min(1)).max(15).optional(),
+    history: z.array(historyTurnSchema).max(12).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const ids = value.knowledgeBaseIds?.filter(Boolean) ?? [];
+    if (!ids.length && !value.knowledgeBaseId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "至少选择一个知识库",
+        path: ["knowledgeBaseIds"],
+      });
+    }
+  });
+
+function resolveKnowledgeBaseIds(body: z.infer<typeof chatSchema>): string[] {
+  const fromList = (body.knowledgeBaseIds ?? []).filter(Boolean);
+  if (fromList.length) {
+    return [...new Set(fromList)];
+  }
+  if (body.knowledgeBaseId) {
+    return [body.knowledgeBaseId];
+  }
+  return [];
+}
 
 function mapReferences(chunks: RetrievedChunk[]) {
   return chunks.map((chunk) => ({
@@ -38,6 +61,7 @@ function mapReferences(chunks: RetrievedChunk[]) {
     slug: chunk.documentId,
     summary: chunk.content.slice(0, 160),
     knowledgeBaseId: chunk.knowledgeBaseId,
+    knowledgeBaseName: chunk.knowledgeBaseName,
     tags: [] as string[],
     score: chunk.score,
     similarity: chunk.score,
@@ -165,11 +189,13 @@ function createSseStream(
 export async function POST(request: Request) {
   try {
     const body = chatSchema.parse(await request.json());
+    const knowledgeBaseIds = resolveKnowledgeBaseIds(body);
+    const topK = Math.min(20, Math.max(5, knowledgeBaseIds.length * 4));
     const searchStarted = Date.now();
     const matchedChunks = await searchChunksByVector(
       body.question,
-      5,
-      body.knowledgeBaseId ? [body.knowledgeBaseId] : undefined,
+      topK,
+      knowledgeBaseIds,
     );
     const searchMs = Date.now() - searchStarted;
     const relevantChunks = filterRelevantChunks(matchedChunks);

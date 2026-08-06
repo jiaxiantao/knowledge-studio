@@ -69,8 +69,13 @@ function MessageReferences({
                   {index + 1}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
                     <BookOpen className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                    {reference.knowledgeBaseName ? (
+                      <span className="rounded-full border border-violet-300/20 bg-violet-400/10 px-2 py-0.5 text-[11px] text-violet-100">
+                        {reference.knowledgeBaseName}
+                      </span>
+                    ) : null}
                     <span className="truncate text-sm text-slate-200 group-hover:text-white">
                       {reference.title}
                     </span>

@@ -158,3 +158,93 @@ export async function createCategory(
 export async function ensureCategoryExists(name: string) {
   return createCategory(name.trim() || DEFAULT_CATEGORY_NAME);
 }
+
+export async function renameCategory(
+  id: string,
+  newName: string,
+): Promise<CategoryRecord> {
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    throw new Error("类目名称不能为空");
+  }
+  if (trimmed.length > 64) {
+    throw new Error("类目名称不能超过 64 个字符");
+  }
+
+  const db = await getReadyDb();
+  if (!db) {
+    throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
+  }
+
+  const existing = await db.documentCategory.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error("类目不存在");
+  }
+  if (existing.name === DEFAULT_CATEGORY_NAME) {
+    throw new Error("默认类目不可修改");
+  }
+  if (trimmed === existing.name) {
+    return mapCategory(existing);
+  }
+  if (trimmed === DEFAULT_CATEGORY_NAME) {
+    throw new Error("不能改名为默认类目");
+  }
+
+  const conflict = await db.documentCategory.findUnique({
+    where: {
+      knowledgeBaseId_name: {
+        knowledgeBaseId: existing.knowledgeBaseId,
+        name: trimmed,
+      },
+    },
+  });
+  if (conflict) {
+    throw new Error("同类目名称已存在");
+  }
+
+  const [, updated] = await db.$transaction([
+    db.document.updateMany({
+      where: {
+        knowledgeBaseId: existing.knowledgeBaseId,
+        category: existing.name,
+      },
+      data: { category: trimmed },
+    }),
+    db.documentCategory.update({
+      where: { id },
+      data: { name: trimmed },
+    }),
+  ]);
+
+  return mapCategory(updated);
+}
+
+export async function deleteCategory(id: string): Promise<{ success: true }> {
+  const db = await getReadyDb();
+  if (!db) {
+    throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
+  }
+
+  const existing = await db.documentCategory.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error("类目不存在");
+  }
+  if (existing.name === DEFAULT_CATEGORY_NAME) {
+    throw new Error("默认类目不可删除");
+  }
+
+  await ensureDefaultCategory(existing.knowledgeBaseId);
+
+  await db.$transaction([
+    db.document.updateMany({
+      where: {
+        knowledgeBaseId: existing.knowledgeBaseId,
+        category: existing.name,
+      },
+      data: { category: DEFAULT_CATEGORY_NAME },
+    }),
+    db.documentCategory.delete({ where: { id } }),
+  ]);
+
+  return { success: true };
+}
