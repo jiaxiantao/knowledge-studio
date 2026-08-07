@@ -37,6 +37,9 @@
     "db:studio": "prisma studio",
     "reparse:kb": "node scripts/reparse-kb.mjs",
     "eval:smoke": "tsx scripts/run-rag-eval-smoke.ts",
+    "compose:db": "docker compose up -d db",
+    "compose:full": "docker compose --profile full up --build -d",
+    "compose:full:down": "docker compose --profile full down",
     "postinstall": "prisma generate"
   },
   "dependencies": {

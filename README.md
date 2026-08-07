@@ -48,6 +48,10 @@
 
 ## 快速开始
 
+### 开发（宿主机 Next + Ollama，Compose 只起库）
+
+macOS 请用免费 **Colima** 替代 Docker Desktop：见 [docs/setup-colima-macos.md](docs/setup-colima-macos.md)（`bash scripts/setup-colima.sh`）。
+
 ```bash
 pnpm i
 cp .env.example .env
@@ -67,11 +71,18 @@ pnpm dev
 
 > 若本机已有旧版 Postgres 卷，换成 pgvector 镜像后需重建：`docker compose down -v && docker compose up -d db && pnpm db:setup`。
 
-### Docker 全栈
+### Docker 全栈（本机 / 内网机房，推荐给人用）
+
+一条命令起 **Postgres + Ollama + Web**（可原样迁到公司内网）：
 
 ```bash
-docker compose up --build
+cp .env.docker.example .env
+# 必改：AUTH_JWT_SECRET、POSTGRES_PASSWORD；局域网则改 NEXT_PUBLIC_SITE_URL
+docker compose --profile full up --build -d
 ```
+
+首次会拉取模型，可用 `docker compose --profile full logs -f ollama-init` 查看进度。  
+详细步骤、备份与机房 checklist 见 [docs/deploy-local-intranet.md](docs/deploy-local-intranet.md)。
 
 ### GitHub Pages 静态导出（可选）
 
@@ -94,8 +105,10 @@ GH_PAGES=1 pnpm build:pages
 | 变量 | 说明 |
 |------|------|
 | `DATABASE_URL` | PostgreSQL（需启用 `vector` 扩展） |
-| `AUTH_JWT_SECRET` | JWT 签名密钥（必填） |
+| `AUTH_JWT_SECRET` | JWT 签名密钥（必填；生产禁止 `change-me` 占位） |
 | `AUTH_JWT_EXPIRES_IN` | JWT 过期（默认 `7d`） |
+| `API_CHAT_RATE_LIMIT_RPM` | 对外 `/api/v1/apps/chat` 每 Key 每分钟上限（默认 30） |
+| `CORS_ORIGINS` | 可选，逗号分隔；为 v1 API 附加 CORS |
 | `OLLAMA_MODEL` / `OLLAMA_EMBED_MODEL` | 对话与 embedding 模型 |
 | `OLLAMA_NATIVE_BASE_URL` | embedding 原生 Ollama 地址（可选） |
 | `UPLOAD_DIR` | 上传文件目录（默认 `data/uploads`） |

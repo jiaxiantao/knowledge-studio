@@ -6,10 +6,12 @@ import { z } from "zod";
 import { requireApiKey } from "@/lib/auth/require-api-key";
 import { runChatAnswer } from "@/lib/chat-answer";
 import type { ChatHistoryTurn } from "@/lib/chat-types";
+import { applyCorsHeaders, corsPreflightResponse } from "@/lib/cors";
 import {
   assertKnowledgeBasesOwned,
   KnowledgeBaseAccessError,
 } from "@/lib/ownership";
+import { takeRateLimitToken } from "@/lib/rate-limit";
 import { isStaticSite } from "@/lib/site-mode";
 
 const messageSchema = z.object({
@@ -36,9 +38,7 @@ const v1Schema = z.object({
     .optional(),
 });
 
-function normalizeAgentIds(
-  agentId: string | string[],
-): string[] {
+function normalizeAgentIds(agentId: string | string[]): string[] {
   return [...new Set(Array.isArray(agentId) ? agentId : [agentId])];
 }
 
@@ -67,9 +67,28 @@ function splitMessages(messages: z.infer<typeof messageSchema>[]): {
   return { question, history };
 }
 
+function withCors(request: Request, response: Response) {
+  applyCorsHeaders(request, response.headers);
+  return response;
+}
+
+function jsonWithCors(
+  request: Request,
+  body: unknown,
+  init?: ResponseInit,
+) {
+  const response = NextResponse.json(body, init);
+  return withCors(request, response);
+}
+
+export async function OPTIONS(request: Request) {
+  return corsPreflightResponse(request);
+}
+
 export async function POST(request: Request) {
   if (isStaticSite()) {
-    return NextResponse.json(
+    return jsonWithCors(
+      request,
       { error: "Static site does not support external chat API" },
       { status: 400 },
     );
@@ -77,7 +96,22 @@ export async function POST(request: Request) {
 
   const keyAuth = await requireApiKey(request);
   if (keyAuth.error) {
-    return keyAuth.error;
+    return withCors(request, keyAuth.error);
+  }
+
+  const rate = takeRateLimitToken(`api-key:${keyAuth.auth.apiKeyId}`);
+  if (!rate.ok) {
+    return jsonWithCors(
+      request,
+      {
+        error: "Rate limit exceeded",
+        retry_after: rate.retryAfterSec,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rate.retryAfterSec) },
+      },
+    );
   }
 
   const requestId = randomUUID();
@@ -100,17 +134,17 @@ export async function POST(request: Request) {
     });
 
     if (outcome.kind === "stream") {
-      return new Response(outcome.body, {
-        headers: {
-          "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
-          "X-Request-Id": requestId,
-        },
+      const headers = new Headers({
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Request-Id": requestId,
       });
+      applyCorsHeaders(request, headers);
+      return new Response(outcome.body, { headers });
     }
 
-    return NextResponse.json({
+    return jsonWithCors(request, {
       request_id: requestId,
       output: {
         text: outcome.result.answer,
@@ -121,7 +155,8 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         {
           request_id: requestId,
           error: error.issues[0]?.message ?? "Invalid payload",
@@ -131,20 +166,23 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof KnowledgeBaseAccessError) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { request_id: requestId, error: error.message },
         { status: error.status },
       );
     }
 
     if (error instanceof Error && error.message.includes("user 消息")) {
-      return NextResponse.json(
+      return jsonWithCors(
+        request,
         { request_id: requestId, error: error.message },
         { status: 400 },
       );
     }
 
-    return NextResponse.json(
+    return jsonWithCors(
+      request,
       {
         request_id: requestId,
         error:

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getReadyDb, isDbMarkedUnavailable, probeDbConnection } from "@/lib/db";
 import { getLlmLabel, isLlmConfigured } from "@/lib/llm-config";
+import { getOllamaBaseUrl } from "@/lib/rag-config";
 
 async function isVectorExtensionEnabled() {
   const db = await getReadyDb();
@@ -16,6 +17,30 @@ async function isVectorExtensionEnabled() {
     return Boolean(rows[0]?.exists);
   } catch {
     return false;
+  }
+}
+
+async function probeLlmReachable() {
+  if (!isLlmConfigured()) {
+    return { ok: false, detail: "unconfigured" as const };
+  }
+
+  const provider = (process.env.LLM_PROVIDER ?? "ollama").toLowerCase();
+  if (provider !== "ollama") {
+    return { ok: true, detail: "configured" as const };
+  }
+
+  const base = getOllamaBaseUrl();
+  try {
+    const response = await fetch(`${base}/api/tags`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) {
+      return { ok: false, detail: `http_${response.status}` as const };
+    }
+    return { ok: true, detail: "reachable" as const };
+  } catch {
+    return { ok: false, detail: "unreachable" as const };
   }
 }
 
@@ -37,17 +62,23 @@ export async function GET() {
     llmLabel = "misconfigured";
   }
 
+  const llmProbe = await probeLlmReachable();
   const totalMs = Math.round(performance.now() - started);
 
   return NextResponse.json({
     ok: dbOk,
-    ready: dbOk && llmConfigured,
+    ready: dbOk && llmConfigured && llmProbe.ok,
     db: {
       connected: Boolean(db) && !isDbMarkedUnavailable(),
       ok: dbOk,
       latencyMs: dbMs,
     },
-    llm: { configured: llmConfigured, label: llmLabel },
+    llm: {
+      configured: llmConfigured,
+      label: llmLabel,
+      reachable: llmProbe.ok,
+      detail: llmProbe.detail,
+    },
     search: { vector },
     server: {
       node: process.version,

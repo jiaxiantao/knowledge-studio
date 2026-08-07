@@ -6,9 +6,12 @@
 
 - Node.js 22（见 `.nvmrc`）
 - pnpm 9
-- Docker（用于本地 PostgreSQL）
+- Docker CLI + 容器引擎（macOS 推荐免费 [Colima](docs/setup-colima-macos.md)，勿依赖 Docker Desktop）
 
 ```bash
+# macOS 若还在用 Docker Desktop：
+bash scripts/setup-colima.sh
+
 pnpm install
 cp .env.example .env
 docker compose up -d db
