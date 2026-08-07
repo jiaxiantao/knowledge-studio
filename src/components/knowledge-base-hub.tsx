@@ -29,6 +29,7 @@ import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
 
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 
 function KnowledgeBaseCardMenu({
   knowledgeBaseId,
@@ -264,7 +265,7 @@ export function KnowledgeBaseHub() {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/knowledge-bases", { cache: "no-store" });
+      const response = await apiFetch("/api/knowledge-bases", { cache: "no-store" });
       const payload = (await response.json()) as {
         knowledgeBases?: KnowledgeBaseRecord[];
       };
@@ -310,7 +311,7 @@ export function KnowledgeBaseHub() {
 
     setCreating(true);
     try {
-      const response = await fetch("/api/knowledge-bases", {
+      const response = await apiFetch("/api/knowledge-bases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -349,7 +350,7 @@ export function KnowledgeBaseHub() {
 
     setSaving(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/knowledge-bases/${encodeURIComponent(editTarget.id)}`,
         {
           method: "PATCH",
@@ -381,7 +382,7 @@ export function KnowledgeBaseHub() {
 
     setDeleting(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/knowledge-bases/${encodeURIComponent(deleteTarget.id)}`,
         { method: "DELETE" },
       );

@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   createUploadedDocument,
   listDocuments,
@@ -12,11 +13,19 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const knowledgeBaseId = new URL(request.url).searchParams.get(
       "knowledgeBaseId",
     );
-    const documents = await listDocuments(knowledgeBaseId ?? undefined);
+    const documents = await listDocuments(
+      auth.user.id,
+      knowledgeBaseId ?? undefined,
+    );
     return NextResponse.json({ documents });
   } catch {
     return NextResponse.json(
@@ -27,6 +36,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const form = await request.formData();
     const file = form.get("file");
@@ -43,7 +57,10 @@ export async function POST(request: Request) {
         : undefined;
 
     if (knowledgeBaseId) {
-      const knowledgeBase = await getKnowledgeBase(knowledgeBaseId);
+      const knowledgeBase = await getKnowledgeBase(
+        knowledgeBaseId,
+        auth.user.id,
+      );
       if (!knowledgeBase) {
         return NextResponse.json({ error: "知识库不存在" }, { status: 404 });
       }
@@ -75,6 +92,7 @@ export async function POST(request: Request) {
       category,
       knowledgeBaseId,
       chunkConfig,
+      auth.user.id,
     );
 
     after(() => {

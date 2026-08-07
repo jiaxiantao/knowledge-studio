@@ -18,6 +18,7 @@ import type {
 } from "@/lib/rag-eval/types";
 import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 type RetrievalEvalPanelProps = {
   initialKnowledgeBaseId?: string;
@@ -71,8 +72,8 @@ export function RetrievalEvalPanel({
       }
       try {
         const [kbRes, evalRes] = await Promise.all([
-          fetch("/api/knowledge-bases"),
-          fetch(
+          apiFetch("/api/knowledge-bases"),
+          apiFetch(
             `/api/retrieval/eval?caseSet=${encodeURIComponent(nextCaseSet)}`,
           ),
         ]);
@@ -176,7 +177,7 @@ export function RetrievalEvalPanel({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/retrieval/eval", {
+      const response = await apiFetch("/api/retrieval/eval", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

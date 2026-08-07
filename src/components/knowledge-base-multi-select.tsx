@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 function SelectedKnowledgeBaseCard({
   knowledgeBase,
@@ -88,7 +89,7 @@ export function KnowledgeBaseMultiSelect({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLoading(true);
-      void fetch("/api/knowledge-bases", { cache: "no-store" })
+      void apiFetch("/api/knowledge-bases", { cache: "no-store" })
         .then((response) => response.json())
         .then((payload: { knowledgeBases?: KnowledgeBaseRecord[] }) => {
           if (!cancelled) {

@@ -1,5 +1,6 @@
 import { ensureDefaultKnowledgeBase } from "@/lib/documents-service";
 import { getReadyDb } from "@/lib/db";
+import { assertCategoryOwned, assertKnowledgeBaseOwned } from "@/lib/ownership";
 
 export const DEFAULT_CATEGORY_NAME = "默认类目";
 
@@ -27,13 +28,18 @@ function mapCategory(row: {
   };
 }
 
-export async function ensureDefaultCategory(knowledgeBaseId?: string) {
+export async function ensureDefaultCategory(
+  userId: string,
+  knowledgeBaseId?: string,
+) {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
-  const kbId = knowledgeBaseId ?? (await ensureDefaultKnowledgeBase()).id;
+  const kbId =
+    knowledgeBaseId ?? (await ensureDefaultKnowledgeBase(userId)).id;
+  await assertKnowledgeBaseOwned(kbId, userId);
 
   const existing = await db.documentCategory.findUnique({
     where: {
@@ -59,6 +65,7 @@ export async function ensureDefaultCategory(knowledgeBaseId?: string) {
 }
 
 export async function listCategories(
+  userId: string,
   knowledgeBaseId?: string,
 ): Promise<CategoryRecord[]> {
   const db = await getReadyDb();
@@ -67,13 +74,10 @@ export async function listCategories(
   }
 
   const kb = knowledgeBaseId
-    ? await db.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } })
-    : await ensureDefaultKnowledgeBase();
-  if (!kb) {
-    return [];
-  }
+    ? await assertKnowledgeBaseOwned(knowledgeBaseId, userId)
+    : await ensureDefaultKnowledgeBase(userId);
 
-  await ensureDefaultCategory(kb.id);
+  await ensureDefaultCategory(userId, kb.id);
 
   // Also absorb categories already used by documents but missing from table.
   const used = await db.document.findMany({
@@ -111,6 +115,7 @@ export async function listCategories(
 }
 
 export async function createCategory(
+  userId: string,
   name: string,
   knowledgeBaseId?: string,
 ): Promise<CategoryRecord> {
@@ -125,12 +130,9 @@ export async function createCategory(
   }
 
   const kb = knowledgeBaseId
-    ? await db.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } })
-    : await ensureDefaultKnowledgeBase();
-  if (!kb) {
-    throw new Error("知识库不存在");
-  }
-  await ensureDefaultCategory(kb.id);
+    ? await assertKnowledgeBaseOwned(knowledgeBaseId, userId)
+    : await ensureDefaultKnowledgeBase(userId);
+  await ensureDefaultCategory(userId, kb.id);
 
   const existing = await db.documentCategory.findUnique({
     where: {
@@ -155,11 +157,12 @@ export async function createCategory(
   return mapCategory(created);
 }
 
-export async function ensureCategoryExists(name: string) {
-  return createCategory(name.trim() || DEFAULT_CATEGORY_NAME);
+export async function ensureCategoryExists(userId: string, name: string) {
+  return createCategory(userId, name.trim() || DEFAULT_CATEGORY_NAME);
 }
 
 export async function renameCategory(
+  userId: string,
   id: string,
   newName: string,
 ): Promise<CategoryRecord> {
@@ -176,10 +179,7 @@ export async function renameCategory(
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
-  const existing = await db.documentCategory.findUnique({ where: { id } });
-  if (!existing) {
-    throw new Error("类目不存在");
-  }
+  const existing = await assertCategoryOwned(id, userId);
   if (existing.name === DEFAULT_CATEGORY_NAME) {
     throw new Error("默认类目不可修改");
   }
@@ -219,21 +219,21 @@ export async function renameCategory(
   return mapCategory(updated);
 }
 
-export async function deleteCategory(id: string): Promise<{ success: true }> {
+export async function deleteCategory(
+  userId: string,
+  id: string,
+): Promise<{ success: true }> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
-  const existing = await db.documentCategory.findUnique({ where: { id } });
-  if (!existing) {
-    throw new Error("类目不存在");
-  }
+  const existing = await assertCategoryOwned(id, userId);
   if (existing.name === DEFAULT_CATEGORY_NAME) {
     throw new Error("默认类目不可删除");
   }
 
-  await ensureDefaultCategory(existing.knowledgeBaseId);
+  await ensureDefaultCategory(userId, existing.knowledgeBaseId);
 
   await db.$transaction([
     db.document.updateMany({

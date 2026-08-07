@@ -38,6 +38,7 @@ function mapRow(row: {
 }
 
 export async function listChatSessions(
+  userId: string,
   knowledgeBaseId: string,
   options: { includeOrphans?: boolean } = {},
 ): Promise<ChatSession[]> {
@@ -47,11 +48,14 @@ export async function listChatSessions(
   }
 
   const rows = await db.chatSession.findMany({
-    where: options.includeOrphans
-      ? {
-          OR: [{ knowledgeBaseId }, { knowledgeBaseId: null }],
-        }
-      : { knowledgeBaseId },
+    where: {
+      userId,
+      ...(options.includeOrphans
+        ? {
+            OR: [{ knowledgeBaseId }, { knowledgeBaseId: null }],
+          }
+        : { knowledgeBaseId }),
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -70,12 +74,35 @@ export async function getChatSession(
   return row ? mapRow(row) : null;
 }
 
+export async function getOwnedChatSession(
+  id: string,
+  userId: string,
+): Promise<ChatSession | null> {
+  const db = await getReadyDb();
+  if (!db) {
+    return null;
+  }
+
+  const row = await db.chatSession.findFirst({
+    where: { id, userId },
+  });
+  return row ? mapRow(row) : null;
+}
+
 export async function upsertChatSession(
   session: ChatSession,
+  userId: string,
 ): Promise<ChatSession> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
+  }
+
+  const existing = await db.chatSession.findUnique({
+    where: { id: session.id },
+  });
+  if (existing && existing.userId && existing.userId !== userId) {
+    throw new Error("会话不存在");
   }
 
   const row = await db.chatSession.upsert({
@@ -83,6 +110,7 @@ export async function upsertChatSession(
     create: {
       id: session.id,
       knowledgeBaseId: session.knowledgeBaseId ?? null,
+      userId,
       title: session.title,
       activeBranchId: session.activeBranchId,
       branches: session.branches as unknown as Prisma.InputJsonValue,
@@ -92,6 +120,7 @@ export async function upsertChatSession(
     },
     update: {
       knowledgeBaseId: session.knowledgeBaseId ?? null,
+      userId,
       title: session.title,
       activeBranchId: session.activeBranchId,
       branches: session.branches as unknown as Prisma.InputJsonValue,
@@ -103,19 +132,25 @@ export async function upsertChatSession(
 
 export async function createChatSession(
   session: ChatSession,
+  userId: string,
 ): Promise<ChatSession> {
-  return upsertChatSession(session);
+  return upsertChatSession(session, userId);
 }
 
-export async function deleteChatSession(id: string): Promise<boolean> {
+export async function deleteChatSession(
+  id: string,
+  userId: string,
+): Promise<boolean> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
   try {
-    await db.chatSession.delete({ where: { id } });
-    return true;
+    const result = await db.chatSession.deleteMany({
+      where: { id, userId },
+    });
+    return result.count > 0;
   } catch {
     return false;
   }
@@ -123,6 +158,7 @@ export async function deleteChatSession(id: string): Promise<boolean> {
 
 export async function replaceAllChatSessions(
   sessions: ChatSession[],
+  userId: string,
 ): Promise<ChatSession[]> {
   const db = await getReadyDb();
   if (!db) {
@@ -130,7 +166,7 @@ export async function replaceAllChatSessions(
   }
 
   await db.$transaction(async (tx) => {
-    await tx.chatSession.deleteMany();
+    await tx.chatSession.deleteMany({ where: { userId } });
     if (!sessions.length) {
       return;
     }
@@ -139,6 +175,7 @@ export async function replaceAllChatSessions(
       data: sessions.map((session) => ({
         id: session.id,
         knowledgeBaseId: session.knowledgeBaseId ?? null,
+        userId,
         title: session.title,
         activeBranchId: session.activeBranchId,
         branches: session.branches as unknown as Prisma.InputJsonValue,
@@ -151,16 +188,17 @@ export async function replaceAllChatSessions(
 
   const knowledgeBaseId = sessions[0]?.knowledgeBaseId;
   if (!knowledgeBaseId) {
-    return listChatSessions((await ensureDefaultKnowledgeBase()).id, {
+    return listChatSessions(userId, (await ensureDefaultKnowledgeBase(userId)).id, {
       includeOrphans: true,
     });
   }
 
-  return listChatSessions(knowledgeBaseId);
+  return listChatSessions(userId, knowledgeBaseId);
 }
 
 export async function attachOrphanSessionsToKnowledgeBase(
   knowledgeBaseId: string,
+  userId: string,
 ) {
   const db = await getReadyDb();
   if (!db) {
@@ -168,7 +206,7 @@ export async function attachOrphanSessionsToKnowledgeBase(
   }
 
   await db.chatSession.updateMany({
-    where: { knowledgeBaseId: null },
+    where: { knowledgeBaseId: null, userId },
     data: { knowledgeBaseId },
   });
 }

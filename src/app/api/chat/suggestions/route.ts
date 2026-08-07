@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import { generateFollowUpSuggestions } from "@/lib/follow-up-suggestions";
 import { isStaticSite } from "@/lib/site-mode";
 
@@ -15,6 +16,11 @@ export async function POST(request: Request) {
       { error: "Static site does not support suggestions" },
       { status: 400 },
     );
+  }
+
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
   }
 
   try {

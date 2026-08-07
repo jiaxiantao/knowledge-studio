@@ -1,11 +1,16 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   deleteDocuments,
   processDocumentIngest,
   queueDocumentReprocess,
 } from "@/lib/documents-service";
+import {
+  assertDocumentsOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 import { isStaticSite } from "@/lib/site-mode";
 
 const batchSchema = z.object({
@@ -21,9 +26,17 @@ export async function POST(request: Request) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = batchSchema.parse(await request.json());
-    const ids = [...new Set(body.ids)];
+    const ids = await assertDocumentsOwned(
+      [...new Set(body.ids)],
+      auth.user.id,
+    );
 
     if (body.action === "delete") {
       const result = await deleteDocuments(ids);
@@ -67,6 +80,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: error.issues[0]?.message ?? "Invalid batch payload" },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 

@@ -1,21 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  answerQuestionWithNotes,
-  getMockStreamAnswer,
-  streamAnswerQuestionWithNotes,
-  streamMockAnswer,
-} from "@/lib/ai-service";
-import { parseAssistantAnswer } from "@/lib/assistant-answer";
-import { computeConfidenceFromReferences } from "@/lib/chat-confidence";
+import { requireUser } from "@/lib/auth/require-user";
+import { runChatAnswer } from "@/lib/chat-answer";
 import type { ChatHistoryTurn } from "@/lib/chat-types";
-import { isLlmConfigured } from "@/lib/llm-config";
-import { getMinRetrievalScore, getKeywordMinScore } from "@/lib/rag-config";
 import {
-  searchChunks,
-  type RetrievedChunk,
-} from "@/lib/vector-search";
+  assertKnowledgeBasesOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 
 const historyTurnSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -54,217 +46,51 @@ function resolveKnowledgeBaseIds(body: z.infer<typeof chatSchema>): string[] {
   return [];
 }
 
-function mapReferences(chunks: RetrievedChunk[]) {
-  return [...chunks]
-    .sort((left, right) => right.score - left.score)
-    .map((chunk) => ({
-      id: chunk.id,
-      title: `${chunk.documentName} · #${chunk.index + 1}`,
-      slug: chunk.documentId,
-      summary: chunk.content.slice(0, 160),
-      knowledgeBaseId: chunk.knowledgeBaseId,
-      knowledgeBaseName: chunk.knowledgeBaseName,
-      tags: [] as string[],
-      score: chunk.score,
-      similarity: chunk.score,
-    }));
-}
-
-function toContextBlocks(chunks: RetrievedChunk[]) {
-  return chunks.map((chunk) => ({
-    id: chunk.id,
-    title: chunk.documentName,
-    summary: `切片 #${chunk.index + 1}`,
-    contentMarkdown: chunk.content,
-    tags: [] as string[],
-  }));
-}
-
-function filterRelevantChunks(chunks: RetrievedChunk[]) {
-  const minScore = getMinRetrievalScore();
-  const keywordMinScore = getKeywordMinScore();
-  return chunks
-    .filter(
-      (chunk) =>
-        (chunk.vectorScore ?? chunk.score) >= minScore ||
-        (chunk.keywordScore ?? 0) >= keywordMinScore,
-    )
-    .sort((left, right) => right.score - left.score);
-}
-
-function sanitizeHistory(
-  history: ChatHistoryTurn[] | undefined,
-): ChatHistoryTurn[] {
-  if (!history?.length) {
-    return [];
+export async function POST(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
   }
 
-  return history.map((turn) => {
-    if (turn.role !== "assistant") {
-      return turn;
-    }
-    const parsed = parseAssistantAnswer(turn.content);
-    return {
-      role: "assistant",
-      content: parsed.conclusion || turn.content,
-    };
-  });
-}
-
-function createSseStream(
-  question: string,
-  matchedChunks: RetrievedChunk[],
-  options: {
-    temperature?: number;
-    regenerate?: boolean;
-    history?: ChatHistoryTurn[];
-    searchMs?: number;
-  } = {},
-) {
-  const encoder = new TextEncoder();
-  const relevantChunks = filterRelevantChunks(matchedChunks);
-  const minScore = getMinRetrievalScore();
-
-  return new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
-      };
-
-      const references = mapReferences(relevantChunks);
-      send("references", { references });
-
-      const { confidence, confidenceLabel } =
-        computeConfidenceFromReferences(references);
-      send("meta", {
-        confidence,
-        confidenceLabel,
-        alternatives: [] as string[],
-        searchMs: options.searchMs,
-        minScore,
-        hitCount: relevantChunks.length,
-      });
-
-      try {
-        const contextBlocks = toContextBlocks(relevantChunks);
-        const history = sanitizeHistory(options.history);
-
-        const useLlm = isLlmConfigured();
-        const temperature =
-          options.temperature ?? (options.regenerate ? 0.55 : 0.2);
-        let usedMock = !useLlm;
-
-        const answerStream = useLlm
-          ? streamAnswerQuestionWithNotes({
-              question,
-              contextBlocks,
-              history,
-              temperature,
-            })
-          : streamMockAnswer(getMockStreamAnswer(question));
-
-        try {
-          for await (const chunk of answerStream) {
-            send("chunk", { text: chunk });
-          }
-        } catch (streamError) {
-          if (!useLlm) {
-            throw streamError;
-          }
-
-          usedMock = true;
-          for await (const chunk of streamMockAnswer(
-            getMockStreamAnswer(question),
-          )) {
-            send("chunk", { text: chunk });
-          }
-        }
-
-        send("done", { streamed: true, mock: usedMock });
-      } catch (error) {
-        send("error", {
-          message:
-            error instanceof Error ? error.message : "Failed to stream answer",
-        });
-      } finally {
-        controller.close();
-      }
-    },
-  });
-}
-
-export async function POST(request: Request) {
   try {
     const body = chatSchema.parse(await request.json());
-    const knowledgeBaseIds = resolveKnowledgeBaseIds(body);
-    const topK = Math.min(20, Math.max(5, knowledgeBaseIds.length * 4));
-    const searchStarted = Date.now();
-    const { results: matchedChunks, meta: searchMeta } = await searchChunks(
-      body.question,
-      topK,
-      knowledgeBaseIds,
+    const knowledgeBaseIds = await assertKnowledgeBasesOwned(
+      resolveKnowledgeBaseIds(body),
+      auth.user.id,
     );
-    const searchMs = Date.now() - searchStarted;
-    const relevantChunks = matchedChunks;
-    const history = sanitizeHistory(body.history);
 
-    if (body.stream) {
-      return new Response(
-        createSseStream(body.question, matchedChunks, {
-          temperature: body.temperature,
-          regenerate: body.regenerate,
-          history,
-          searchMs,
-        }),
-        {
-          headers: {
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache, no-transform",
-            Connection: "keep-alive",
-          },
-        },
-      );
-    }
-
-    const contextBlocks = toContextBlocks(relevantChunks);
-
-    let answer: string;
-    let mock = false;
-
-    if (isLlmConfigured()) {
-      try {
-        answer = await answerQuestionWithNotes({
-          question: body.question,
-          contextBlocks,
-          history,
-        });
-      } catch {
-        answer = getMockStreamAnswer(body.question);
-        mock = true;
-      }
-    } else {
-      answer = getMockStreamAnswer(body.question);
-      mock = true;
-    }
-
-    return NextResponse.json({
-      answer,
-      mock,
-      references: mapReferences(relevantChunks),
-      meta: {
-        searchMs,
-        minScore: getMinRetrievalScore(),
-        hitCount: relevantChunks.length,
-        retrievalMode: searchMeta.mode,
-      },
+    const outcome = await runChatAnswer({
+      question: body.question,
+      knowledgeBaseIds,
+      history: body.history as ChatHistoryTurn[] | undefined,
+      temperature: body.temperature,
+      regenerate: body.regenerate,
+      stream: body.stream,
     });
+
+    if (outcome.kind === "stream") {
+      return new Response(outcome.body, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
+    return NextResponse.json(outcome.result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: "Invalid chat payload", details: error.flatten() },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 

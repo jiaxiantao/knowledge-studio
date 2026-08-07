@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   createKnowledgeBase,
   listKnowledgeBases,
 } from "@/lib/knowledge-bases-service";
 import { isStaticSite } from "@/lib/site-mode";
 
-export async function GET() {
+export async function GET(request: Request) {
   if (isStaticSite()) {
     return NextResponse.json(
       { error: "Static site does not support knowledge bases API" },
@@ -15,8 +16,13 @@ export async function GET() {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
-    const knowledgeBases = await listKnowledgeBases();
+    const knowledgeBases = await listKnowledgeBases(auth.user.id);
     return NextResponse.json({ knowledgeBases });
   } catch (error) {
     return NextResponse.json(
@@ -39,6 +45,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = z
       .object({
@@ -47,7 +58,7 @@ export async function POST(request: Request) {
       })
       .parse(await request.json());
 
-    const knowledgeBase = await createKnowledgeBase(body);
+    const knowledgeBase = await createKnowledgeBase(auth.user.id, body);
     return NextResponse.json({ knowledgeBase }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {

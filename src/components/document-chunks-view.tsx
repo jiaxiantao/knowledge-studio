@@ -31,6 +31,7 @@ import {
 import type { DocumentRecord } from "@/lib/documents-service";
 import { documentPreviewPath } from "@/lib/document-preview-path";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 type EditorMode = "create" | "edit";
 
@@ -130,7 +131,7 @@ export function DocumentChunksView({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/documents/${id}/chunks`, {
+      const response = await apiFetch(`/api/documents/${id}/chunks`, {
         cache: "no-store",
       });
       const payload = (await response.json()) as {
@@ -216,12 +217,12 @@ export function DocumentChunksView({
 
       const response =
         editor.mode === "create"
-          ? await fetch(`/api/documents/${id}/chunks`, {
+          ? await apiFetch(`/api/documents/${id}/chunks`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
             })
-          : await fetch(`/api/documents/${id}/chunks/${editor.chunkId}`, {
+          : await apiFetch(`/api/documents/${id}/chunks/${editor.chunkId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
@@ -257,7 +258,7 @@ export function DocumentChunksView({
 
     setDeleting(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/documents/${id}/chunks/${deleteTarget.id}`,
         { method: "DELETE" },
       );
@@ -290,7 +291,7 @@ export function DocumentChunksView({
     );
 
     try {
-      const response = await fetch(`/api/documents/${id}/chunks/${chunk.id}`, {
+      const response = await apiFetch(`/api/documents/${id}/chunks/${chunk.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),

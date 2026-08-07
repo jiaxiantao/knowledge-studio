@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   deleteChatSession,
   getChatSession,
+  getOwnedChatSession,
   upsertChatSession,
 } from "@/lib/chat-sessions-service";
 import type { ChatSession } from "@/lib/chat-types";
@@ -38,6 +40,7 @@ function staticBlocked() {
   );
 }
 
+/** Public read for share links; write ops require auth. */
 export async function GET(_request: Request, context: RouteContext) {
   if (isStaticSite()) {
     return staticBlocked();
@@ -68,6 +71,11 @@ export async function PUT(request: Request, context: RouteContext) {
     return staticBlocked();
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await context.params;
     const body = sessionSchema.parse(await request.json());
@@ -79,10 +87,21 @@ export async function PUT(request: Request, context: RouteContext) {
       );
     }
 
-    const session = await upsertChatSession({
-      ...(body as ChatSession),
-      updatedAt: body.updatedAt ?? new Date().toISOString(),
-    });
+    const existing = await getOwnedChatSession(id, auth.user.id);
+    if (!existing) {
+      const any = await getChatSession(id);
+      if (any) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
+    }
+
+    const session = await upsertChatSession(
+      {
+        ...(body as ChatSession),
+        updatedAt: body.updatedAt ?? new Date().toISOString(),
+      },
+      auth.user.id,
+    );
 
     return NextResponse.json({ session });
   } catch (error) {
@@ -103,14 +122,19 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   if (isStaticSite()) {
     return staticBlocked();
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await context.params;
-    const deleted = await deleteChatSession(id);
+    const deleted = await deleteChatSession(id, auth.user.id);
 
     if (!deleted) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });

@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 
 import { ConsoleSubpageLayout } from "@/components/console-page-top-bar";
 import { DocumentLibrary } from "@/components/document-library";
+import { apiFetch } from "@/lib/api-fetch";
 
 function KnowledgeDocumentsPageInner() {
   const searchParams = useSearchParams();
@@ -17,7 +18,7 @@ function KnowledgeDocumentsPageInner() {
       return;
     }
 
-    void fetch(`/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`)
+    void apiFetch(`/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`)
       .then((response) => response.json())
       .then((payload: { knowledgeBase?: { name: string } }) => {
         if (payload.knowledgeBase?.name) {

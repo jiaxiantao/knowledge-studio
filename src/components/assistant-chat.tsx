@@ -38,6 +38,7 @@ import {
 } from "@/lib/chat-sessions";
 import { isStaticSite } from "@/lib/site-mode";
 import { buildFallbackSessionTitle } from "@/lib/session-title";
+import { apiFetch } from "@/lib/api-fetch";
 
 const CHAT_KB_SELECTION_PREFIX = "ks.chat.kbSelection.";
 
@@ -97,7 +98,7 @@ function createMessage(
 }
 
 async function fetchFollowUpSuggestions(question: string, answer: string) {
-  const response = await fetch("/api/chat/suggestions", {
+  const response = await apiFetch("/api/chat/suggestions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, answer }),
@@ -112,7 +113,7 @@ async function fetchFollowUpSuggestions(question: string, answer: string) {
 }
 
 async function fetchSessionTitle(question: string, answer: string) {
-  const response = await fetch("/api/chat/title", {
+  const response = await apiFetch("/api/chat/title", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, answer }),

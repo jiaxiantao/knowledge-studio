@@ -43,7 +43,7 @@ export function SiteHealthBadge() {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <StatusDot ok={health.db.ok} label={health.db.ok ? "DB" : "DB 异常"} />
       <StatusDot
         ok={health.llm.configured}

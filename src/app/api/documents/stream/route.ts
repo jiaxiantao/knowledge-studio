@@ -1,3 +1,4 @@
+import { requireUserAllowQuery } from "@/lib/auth/require-user";
 import { subscribeDocumentProgress } from "@/lib/document-progress-events";
 import { listDocuments } from "@/lib/documents-service";
 import { getKnowledgeBase } from "@/lib/knowledge-bases-service";
@@ -8,6 +9,11 @@ export const dynamic = "force-dynamic";
 const HEARTBEAT_MS = 15_000;
 
 export async function GET(request: Request) {
+  const auth = await requireUserAllowQuery(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   const knowledgeBaseId = new URL(request.url).searchParams.get(
     "knowledgeBaseId",
   );
@@ -19,7 +25,10 @@ export async function GET(request: Request) {
     });
   }
 
-  const knowledgeBase = await getKnowledgeBase(knowledgeBaseId.trim());
+  const knowledgeBase = await getKnowledgeBase(
+    knowledgeBaseId.trim(),
+    auth.user.id,
+  );
   if (!knowledgeBase) {
     return new Response(JSON.stringify({ error: "知识库不存在" }), {
       status: 404,
@@ -46,7 +55,9 @@ export async function GET(request: Request) {
 
       send("connected", { knowledgeBaseId: knowledgeBase.id });
 
-      const activeDocuments = (await listDocuments(knowledgeBase.id)).filter(
+      const activeDocuments = (
+        await listDocuments(auth.user.id, knowledgeBase.id)
+      ).filter(
         (doc) => doc.status === "pending" || doc.status === "parsing",
       );
       for (const document of activeDocuments) {

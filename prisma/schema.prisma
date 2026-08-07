@@ -6,15 +6,51 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id           String         @id @default(cuid())
+  email        String?        @unique
+  phone        String?        @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  knowledgeBases KnowledgeBase[]
+  chatSessions ChatSession[]
+  apiKeys      ApiKey[]
+}
+
+/// User-scoped API keys for external Q&A (`Authorization: Bearer sk-ks-…`).
+model ApiKey {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  description String    @default("")
+  /// Short prefix for list display, e.g. sk-ks-xxxx****yyyy
+  keyPrefix   String
+  /// SHA-256 hex of the full secret (unique lookup).
+  keyHash     String    @unique
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastUsedAt  DateTime?
+
+  @@index([userId])
+  @@index([enabled])
+}
+
 model KnowledgeBase {
   id          String             @id @default(cuid())
   name        String
   description String?
+  userId      String?
+  user        User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
   documents   Document[]
   categories  DocumentCategory[]
   chatSessions ChatSession[]
+
+  @@index([userId])
 }
 
 enum DocumentStatus {
@@ -116,6 +152,8 @@ model ChatSession {
   id              String         @id
   knowledgeBaseId String?
   knowledgeBase   KnowledgeBase? @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  userId          String?
+  user            User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
   title           String
   activeBranchId  String
   branches        Json
@@ -123,5 +161,6 @@ model ChatSession {
   updatedAt       DateTime       @updatedAt
 
   @@index([knowledgeBaseId])
+  @@index([userId])
   @@index([updatedAt])
 }

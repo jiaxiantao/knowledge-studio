@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { requireUser } from "@/lib/auth/require-user";
 import { buildDocumentPreview } from "@/lib/document-preview-server";
 import { getDocumentFile } from "@/lib/documents-service";
+import {
+  assertDocumentOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 import { isStaticSite } from "@/lib/site-mode";
 
 type RouteProps = {
@@ -10,7 +15,7 @@ type RouteProps = {
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: RouteProps) {
+export async function GET(request: Request, { params }: RouteProps) {
   if (isStaticSite()) {
     return NextResponse.json(
       { error: "Static site does not support document preview" },
@@ -18,8 +23,14 @@ export async function GET(_request: Request, { params }: RouteProps) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await params;
+    await assertDocumentOwned(id, auth.user.id);
     const file = await getDocumentFile(id);
 
     if (!file) {
@@ -33,6 +44,12 @@ export async function GET(_request: Request, { params }: RouteProps) {
       preview,
     });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         error:

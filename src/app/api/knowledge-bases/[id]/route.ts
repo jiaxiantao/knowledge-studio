@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   deleteKnowledgeBase,
   getKnowledgeBase,
@@ -12,7 +13,7 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   if (isStaticSite()) {
     return NextResponse.json(
       { error: "Static site does not support knowledge bases API" },
@@ -20,9 +21,14 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await context.params;
-    const knowledgeBase = await getKnowledgeBase(id);
+    const knowledgeBase = await getKnowledgeBase(id, auth.user.id);
     if (!knowledgeBase) {
       return NextResponse.json({ error: "知识库不存在" }, { status: 404 });
     }
@@ -46,6 +52,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await context.params;
     const body = z
@@ -55,7 +66,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       })
       .parse(await request.json());
 
-    const knowledgeBase = await updateKnowledgeBase(id, body);
+    const knowledgeBase = await updateKnowledgeBase(id, auth.user.id, body);
     if (!knowledgeBase) {
       return NextResponse.json({ error: "知识库不存在" }, { status: 404 });
     }
@@ -80,7 +91,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   if (isStaticSite()) {
     return NextResponse.json(
       { error: "Static site does not support knowledge bases API" },
@@ -88,13 +99,17 @@ export async function DELETE(_request: Request, context: RouteContext) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await context.params;
-    const existing = await getKnowledgeBase(id);
-    if (!existing) {
+    const deleted = await deleteKnowledgeBase(id, auth.user.id);
+    if (!deleted) {
       return NextResponse.json({ error: "知识库不存在" }, { status: 404 });
     }
-    await deleteKnowledgeBase(id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

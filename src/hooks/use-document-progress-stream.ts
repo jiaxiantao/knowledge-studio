@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { getAuthToken } from "@/lib/auth-client";
 import type { DocumentRecord } from "@/lib/documents-service";
 
 type UseDocumentProgressStreamOptions = {
@@ -20,9 +21,16 @@ export function useDocumentProgressStream({
       return;
     }
 
-    const source = new EventSource(
-      `/api/documents/stream?knowledgeBaseId=${encodeURIComponent(knowledgeBaseId)}`,
-    );
+    const token = getAuthToken();
+    if (!token) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      knowledgeBaseId,
+      access_token: token,
+    });
+    const source = new EventSource(`/api/documents/stream?${params.toString()}`);
 
     source.addEventListener("document", (event) => {
       try {

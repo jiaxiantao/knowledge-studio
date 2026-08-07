@@ -16,6 +16,7 @@ import { StaticSiteNotice } from "@/components/static-site-notice";
 import { showToast } from "@/components/ui/toast";
 import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 type ServiceKind = "retrieval" | "assistant";
 
@@ -121,6 +122,22 @@ function ServiceEntryCard({
             )}
           </button>
         </div>
+        {kind === "assistant" ? (
+          <div className="flex items-center gap-2">
+            <span className="w-12 shrink-0 text-slate-400">API</span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                window.location.href = `/developer/playground?kb=${encodeURIComponent(knowledgeBase.id)}`;
+              }}
+              className="text-xs text-cyan-200 hover:underline"
+            >
+              API 调用
+            </button>
+          </div>
+        ) : null}
         {kind === "assistant" && modelLabel ? (
           <div className="flex items-center gap-2">
             <span className="w-12 shrink-0 text-slate-400">模型</span>
@@ -154,7 +171,7 @@ export function ServiceEntryList({ kind, modelLabel }: ServiceEntryListProps) {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/knowledge-bases", { cache: "no-store" });
+      const response = await apiFetch("/api/knowledge-bases", { cache: "no-store" });
       const payload = (await response.json()) as {
         knowledgeBases?: KnowledgeBaseRecord[];
       };

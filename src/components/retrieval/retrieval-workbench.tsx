@@ -24,6 +24,7 @@ import {
 import { showToast } from "@/components/ui/toast";
 import type { KnowledgeBaseRecord } from "@/lib/knowledge-base-types";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 type RetrievalHit = {
   id: string;
@@ -277,7 +278,7 @@ export function RetrievalWorkbench({
       return;
     }
 
-    void fetch("/api/knowledge-bases", { cache: "no-store" })
+    void apiFetch("/api/knowledge-bases", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { knowledgeBases?: KnowledgeBaseRecord[] }) => {
         setAllKnowledgeBases(payload.knowledgeBases ?? []);
@@ -361,7 +362,7 @@ export function RetrievalWorkbench({
     setError(null);
 
     try {
-      const response = await fetch("/api/retrieval", {
+      const response = await apiFetch("/api/retrieval", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

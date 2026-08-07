@@ -20,21 +20,26 @@ function mapKnowledgeBase(
   };
 }
 
-export async function listKnowledgeBases(): Promise<KnowledgeBaseRecord[]> {
+const kbInclude = {
+  _count: { select: { documents: true } },
+  documents: {
+    where: { status: "ready" as const },
+    select: { id: true },
+  },
+};
+
+export async function listKnowledgeBases(
+  userId: string,
+): Promise<KnowledgeBaseRecord[]> {
   const db = await getReadyDb();
   if (!db) {
     return [];
   }
 
   const rows = await db.knowledgeBase.findMany({
+    where: { userId },
     orderBy: { createdAt: "asc" },
-    include: {
-      _count: { select: { documents: true } },
-      documents: {
-        where: { status: "ready" },
-        select: { id: true },
-      },
-    },
+    include: kbInclude,
   });
 
   return rows.map((row) =>
@@ -47,21 +52,16 @@ export async function listKnowledgeBases(): Promise<KnowledgeBaseRecord[]> {
 
 export async function getKnowledgeBase(
   id: string,
+  userId: string,
 ): Promise<KnowledgeBaseRecord | null> {
   const db = await getReadyDb();
   if (!db) {
     return null;
   }
 
-  const row = await db.knowledgeBase.findUnique({
-    where: { id },
-    include: {
-      _count: { select: { documents: true } },
-      documents: {
-        where: { status: "ready" },
-        select: { id: true },
-      },
-    },
+  const row = await db.knowledgeBase.findFirst({
+    where: { id, userId },
+    include: kbInclude,
   });
 
   if (!row) {
@@ -74,10 +74,13 @@ export async function getKnowledgeBase(
   });
 }
 
-export async function createKnowledgeBase(input: {
-  name: string;
-  description?: string;
-}): Promise<KnowledgeBaseRecord> {
+export async function createKnowledgeBase(
+  userId: string,
+  input: {
+    name: string;
+    description?: string;
+  },
+): Promise<KnowledgeBaseRecord> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
@@ -87,14 +90,9 @@ export async function createKnowledgeBase(input: {
     data: {
       name: input.name.trim(),
       description: input.description?.trim() || null,
+      userId,
     },
-    include: {
-      _count: { select: { documents: true } },
-      documents: {
-        where: { status: "ready" },
-        select: { id: true },
-      },
-    },
+    include: kbInclude,
   });
 
   return mapKnowledgeBase({
@@ -105,11 +103,19 @@ export async function createKnowledgeBase(input: {
 
 export async function updateKnowledgeBase(
   id: string,
+  userId: string,
   input: { name?: string; description?: string | null },
 ): Promise<KnowledgeBaseRecord | null> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
+  }
+
+  const existing = await db.knowledgeBase.findFirst({
+    where: { id, userId },
+  });
+  if (!existing) {
+    return null;
   }
 
   const row = await db.knowledgeBase.update({
@@ -120,13 +126,7 @@ export async function updateKnowledgeBase(
         ? { description: input.description?.trim() || null }
         : {}),
     },
-    include: {
-      _count: { select: { documents: true } },
-      documents: {
-        where: { status: "ready" },
-        select: { id: true },
-      },
-    },
+    include: kbInclude,
   });
 
   return mapKnowledgeBase({
@@ -135,10 +135,20 @@ export async function updateKnowledgeBase(
   });
 }
 
-export async function deleteKnowledgeBase(id: string): Promise<boolean> {
+export async function deleteKnowledgeBase(
+  id: string,
+  userId: string,
+): Promise<boolean> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
+  }
+
+  const existing = await db.knowledgeBase.findFirst({
+    where: { id, userId },
+  });
+  if (!existing) {
+    return false;
   }
 
   await db.knowledgeBase.delete({ where: { id } });

@@ -33,6 +33,7 @@ import {
   acceptAttribute,
   validateUploadBasics,
 } from "@/lib/upload-rules";
+import { apiFetch } from "@/lib/api-fetch";
 
 const DEFAULT_CATEGORY = "默认类目";
 
@@ -152,7 +153,7 @@ export function DocumentUploadForm({
 
     setLoadingCategories(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/categories?knowledgeBaseId=${encodeURIComponent(knowledgeBaseId)}`,
         { cache: "no-store" },
       );
@@ -255,7 +256,7 @@ export function DocumentUploadForm({
     setError(null);
 
     try {
-      const response = await fetch("/api/categories", {
+      const response = await apiFetch("/api/categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, knowledgeBaseId }),
@@ -315,7 +316,7 @@ export function DocumentUploadForm({
     setSavingCategory(true);
     setError(null);
     try {
-      const response = await fetch(`/api/categories/${editingCategoryId}`, {
+      const response = await apiFetch(`/api/categories/${editingCategoryId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -373,7 +374,7 @@ export function DocumentUploadForm({
     setSavingCategory(true);
     setError(null);
     try {
-      const response = await fetch(`/api/categories/${item.id}`, {
+      const response = await apiFetch(`/api/categories/${item.id}`, {
         method: "DELETE",
       });
       const payload = (await response.json()) as { error?: string };
@@ -440,7 +441,7 @@ export function DocumentUploadForm({
         form.append("knowledgeBaseId", knowledgeBaseId);
         form.append("chunkConfig", serializeChunkConfig(chunkConfig));
 
-        const response = await fetch("/api/documents", {
+        const response = await apiFetch("/api/documents", {
           method: "POST",
           body: form,
         });

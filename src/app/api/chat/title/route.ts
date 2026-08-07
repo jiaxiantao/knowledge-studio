@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import { generateSessionTitle } from "@/lib/session-title";
 import { isStaticSite } from "@/lib/site-mode";
 
@@ -15,6 +16,11 @@ export async function POST(request: Request) {
       { error: "Static site does not support title generation" },
       { status: 400 },
     );
+  }
+
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
   }
 
   try {

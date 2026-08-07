@@ -20,6 +20,7 @@ import {
 import { documentPreviewPath } from "@/lib/document-preview-path";
 import { isDocumentIngestStuck } from "@/lib/document-status";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 function formatBytes(size: number) {
   if (size < 1024) {
@@ -169,7 +170,7 @@ export function DocumentLibrary({
       setError(null);
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/documents?knowledgeBaseId=${encodeURIComponent(knowledgeBaseId)}`,
           { cache: "no-store" },
         );
@@ -230,7 +231,7 @@ export function DocumentLibrary({
     try {
       if (pendingDelete.type === "single") {
         const id = pendingDelete.document.id;
-        const response = await fetch(`/api/documents/${id}`, {
+        const response = await apiFetch(`/api/documents/${id}`, {
           method: "DELETE",
         });
         const payload = (await response.json()) as { error?: string };
@@ -241,7 +242,7 @@ export function DocumentLibrary({
         setSelectedIds((current) => current.filter((item) => item !== id));
       } else {
         const ids = pendingDelete.ids;
-        const response = await fetch("/api/documents/batch", {
+        const response = await apiFetch("/api/documents/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", ids }),
@@ -285,7 +286,7 @@ export function DocumentLibrary({
     setError(null);
 
     try {
-      const response = await fetch("/api/documents/batch", {
+      const response = await apiFetch("/api/documents/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry", ids }),

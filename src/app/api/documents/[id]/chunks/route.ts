@@ -1,18 +1,29 @@
 import { NextResponse } from "next/server";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   createDocumentChunk,
   getDocument,
   listDocumentChunks,
 } from "@/lib/documents-service";
+import {
+  assertDocumentOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 
 type RouteProps = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, { params }: RouteProps) {
+export async function GET(request: Request, { params }: RouteProps) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await params;
+    await assertDocumentOwned(id, auth.user.id);
     const document = await getDocument(id);
 
     if (!document) {
@@ -21,7 +32,13 @@ export async function GET(_request: Request, { params }: RouteProps) {
 
     const chunks = await listDocumentChunks(id);
     return NextResponse.json({ document, chunks });
-  } catch {
+  } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       { error: "Failed to load chunks" },
       { status: 500 },
@@ -30,8 +47,14 @@ export async function GET(_request: Request, { params }: RouteProps) {
 }
 
 export async function POST(request: Request, { params }: RouteProps) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await params;
+    await assertDocumentOwned(id, auth.user.id);
     const document = await getDocument(id);
 
     if (!document) {
@@ -56,9 +79,14 @@ export async function POST(request: Request, { params }: RouteProps) {
 
     return NextResponse.json({ chunk }, { status: 201 });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Failed to create chunk";
-    const status = message.includes("不能") ? 400 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

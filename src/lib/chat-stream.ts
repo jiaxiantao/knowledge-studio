@@ -1,4 +1,5 @@
 import type { ChatHistoryTurn, ChatStreamMeta } from "@/lib/chat-types";
+import { apiFetch } from "@/lib/api-fetch";
 
 export type ChatReference = {
   id: string;
@@ -78,7 +79,7 @@ export async function streamChatQuestion(
   handlers: StreamHandlers,
   options: StreamChatOptions = {},
 ) {
-  const response = await fetch("/api/chat", {
+  const response = await apiFetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal: options.signal,

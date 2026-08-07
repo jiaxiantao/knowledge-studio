@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import { deleteCategory, renameCategory } from "@/lib/categories-service";
+import { KnowledgeBaseAccessError } from "@/lib/ownership";
 import { isStaticSite } from "@/lib/site-mode";
 
 type RouteProps = {
@@ -16,6 +18,11 @@ export async function PATCH(request: Request, { params }: RouteProps) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await params;
     const body = z
@@ -24,13 +31,20 @@ export async function PATCH(request: Request, { params }: RouteProps) {
       })
       .parse(await request.json());
 
-    const category = await renameCategory(id, body.name);
+    const category = await renameCategory(auth.user.id, id, body.name);
     return NextResponse.json({ category });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: error.issues[0]?.message ?? "Invalid category" },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 
@@ -47,7 +61,7 @@ export async function PATCH(request: Request, { params }: RouteProps) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: RouteProps) {
+export async function DELETE(request: Request, { params }: RouteProps) {
   if (isStaticSite()) {
     return NextResponse.json(
       { error: "Static site does not support categories API" },
@@ -55,11 +69,23 @@ export async function DELETE(_request: Request, { params }: RouteProps) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id } = await params;
-    await deleteCategory(id);
+    await deleteCategory(auth.user.id, id);
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
+
     const message =
       error instanceof Error ? error.message : "Failed to delete category";
     const status =

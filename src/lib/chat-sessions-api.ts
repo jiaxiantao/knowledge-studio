@@ -1,4 +1,5 @@
 import type { ChatSession } from "@/lib/chat-types";
+import { apiFetch } from "@/lib/api-fetch";
 
 async function readError(response: Response) {
   try {
@@ -12,7 +13,7 @@ async function readError(response: Response) {
 export async function fetchChatSessions(
   knowledgeBaseId: string,
 ): Promise<ChatSession[]> {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/chat/sessions?knowledgeBaseId=${encodeURIComponent(knowledgeBaseId)}`,
   );
   if (!response.ok) {
@@ -26,7 +27,7 @@ export async function fetchChatSessions(
 export async function createChatSessionRemote(
   session: ChatSession,
 ): Promise<ChatSession> {
-  const response = await fetch("/api/chat/sessions", {
+  const response = await apiFetch("/api/chat/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session }),
@@ -43,7 +44,7 @@ export async function createChatSessionRemote(
 export async function saveChatSessionRemote(
   session: ChatSession,
 ): Promise<ChatSession> {
-  const response = await fetch(`/api/chat/sessions/${session.id}`, {
+  const response = await apiFetch(`/api/chat/sessions/${session.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(session),
@@ -58,7 +59,7 @@ export async function saveChatSessionRemote(
 }
 
 export async function deleteChatSessionRemote(sessionId: string) {
-  const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+  const response = await apiFetch(`/api/chat/sessions/${sessionId}`, {
     method: "DELETE",
   });
 
@@ -70,7 +71,7 @@ export async function deleteChatSessionRemote(sessionId: string) {
 export async function replaceChatSessionsRemote(
   sessions: ChatSession[],
 ): Promise<ChatSession[]> {
-  const response = await fetch("/api/chat/sessions", {
+  const response = await apiFetch("/api/chat/sessions", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessions }),

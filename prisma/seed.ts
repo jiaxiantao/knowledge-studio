@@ -26,28 +26,11 @@ async function ensureExtensions() {
   await runSqlFile("prisma/sql/hybrid-search-indexes.sql");
 }
 
-async function ensureDefaultKnowledgeBase() {
-  const existing = await prisma.knowledgeBase.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (existing) {
-    return existing;
-  }
-
-  return prisma.knowledgeBase.create({
-    data: {
-      name: "我的知识库",
-      description: "本地轻量 RAG 知识库（文件上传 → 切片 → 向量检索 → 问答）",
-    },
-  });
-}
-
 async function main() {
   await ensureExtensions();
-  const kb = await ensureDefaultKnowledgeBase();
+  console.log("Seeded extensions · vector + pg_trgm: enabled");
   console.log(
-    `Seeded knowledge base · kb=${kb.name} · vector + pg_trgm: enabled`,
+    "Default knowledge bases are created per user on first login/register.",
   );
 }
 

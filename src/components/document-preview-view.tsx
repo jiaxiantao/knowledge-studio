@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import type { DocumentPreviewPayload } from "@/lib/document-preview-types";
 import type { DocumentRecord } from "@/lib/documents-service";
 import { isStaticSite } from "@/lib/site-mode";
+import { apiFetch } from "@/lib/api-fetch";
 
 function formatBytes(size: number) {
   if (size < 1024) {
@@ -165,7 +166,7 @@ export function DocumentPreviewView({
     setError(null);
 
     try {
-      const response = await fetch(`/api/documents/${id}/preview`, {
+      const response = await apiFetch(`/api/documents/${id}/preview`, {
         cache: "no-store",
       });
       const payload = (await response.json()) as {

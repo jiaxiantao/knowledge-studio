@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import { createCategory, listCategories } from "@/lib/categories-service";
+import { KnowledgeBaseAccessError } from "@/lib/ownership";
 import { isStaticSite } from "@/lib/site-mode";
 
 export async function GET(request: Request) {
@@ -12,13 +14,27 @@ export async function GET(request: Request) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const knowledgeBaseId = new URL(request.url).searchParams.get(
       "knowledgeBaseId",
     );
-    const categories = await listCategories(knowledgeBaseId ?? undefined);
+    const categories = await listCategories(
+      auth.user.id,
+      knowledgeBaseId ?? undefined,
+    );
     return NextResponse.json({ categories });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         error:
@@ -37,6 +53,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = z
       .object({
@@ -45,13 +66,24 @@ export async function POST(request: Request) {
       })
       .parse(await request.json());
 
-    const category = await createCategory(body.name, body.knowledgeBaseId);
+    const category = await createCategory(
+      auth.user.id,
+      body.name,
+      body.knowledgeBaseId,
+    );
     return NextResponse.json({ category }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: error.issues[0]?.message ?? "Invalid category" },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 

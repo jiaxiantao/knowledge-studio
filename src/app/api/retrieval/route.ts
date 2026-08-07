@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
+import {
+  assertKnowledgeBasesOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 import { getEmbedModel, getKeywordMinScore, getMinRetrievalScore } from "@/lib/rag-config";
 import { searchChunks } from "@/lib/vector-search";
 
@@ -13,11 +18,19 @@ const retrievalSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = retrievalSchema.parse(await request.json());
-    const knowledgeBaseIds =
+    const rawIds =
       body.knowledgeBaseIds ??
       (body.knowledgeBaseId ? [body.knowledgeBaseId] : undefined);
+    const knowledgeBaseIds = rawIds?.length
+      ? await assertKnowledgeBasesOwned(rawIds, auth.user.id)
+      : undefined;
     const topK = body.topK ?? 5;
     const minScore = body.minScore ?? getMinRetrievalScore();
     const embedModel = getEmbedModel();
@@ -54,6 +67,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Invalid retrieval payload", details: error.flatten() },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 

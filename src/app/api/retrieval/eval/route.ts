@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   getRagEvalCases,
   RAG_EVAL_CASE_SET_META,
 } from "@/lib/rag-eval/cases";
 import { runRagEval } from "@/lib/rag-eval/run-eval";
+import {
+  assertKnowledgeBasesOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 import { getMinRetrievalScore } from "@/lib/rag-config";
 
 export const runtime = "nodejs";
@@ -42,6 +47,11 @@ const evalSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   const caseSetParam = new URL(request.url).searchParams.get("caseSet");
   const parsedSet = caseSetSchema.safeParse(caseSetParam ?? "soft-exam");
   const caseSet = parsedSet.success ? parsedSet.data : "soft-exam";
@@ -59,11 +69,19 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = evalSchema.parse(await request.json());
-    const knowledgeBaseIds =
+    const rawIds =
       body.knowledgeBaseIds ??
       (body.knowledgeBaseId ? [body.knowledgeBaseId] : undefined);
+    const knowledgeBaseIds = rawIds?.length
+      ? await assertKnowledgeBasesOwned(rawIds, auth.user.id)
+      : undefined;
     const caseSet = body.caseSet ?? "soft-exam";
 
     const { summary, results, cases } = await runRagEval({
@@ -80,6 +98,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Invalid eval payload", details: error.flatten() },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
       );
     }
 

@@ -81,13 +81,16 @@ function mapDocument(
   };
 }
 
-export async function ensureDefaultKnowledgeBase(): Promise<KnowledgeBase> {
+export async function ensureDefaultKnowledgeBase(
+  userId: string,
+): Promise<KnowledgeBase> {
   const db = await getReadyDb();
   if (!db) {
     throw new Error("DATABASE_URL is not configured or PostgreSQL is unreachable");
   }
 
   const existing = await db.knowledgeBase.findFirst({
+    where: { userId },
     orderBy: { createdAt: "asc" },
   });
   if (existing) {
@@ -98,18 +101,33 @@ export async function ensureDefaultKnowledgeBase(): Promise<KnowledgeBase> {
     data: {
       name: "我的知识库",
       description: "本地轻量 RAG 知识库",
+      userId,
     },
   });
 }
 
-export async function listDocuments(knowledgeBaseId?: string) {
+export async function listDocuments(
+  userId: string,
+  knowledgeBaseId?: string,
+) {
   const db = await getReadyDb();
   if (!db) {
     return [] as DocumentRecord[];
   }
 
+  if (knowledgeBaseId) {
+    const kb = await db.knowledgeBase.findFirst({
+      where: { id: knowledgeBaseId, userId },
+    });
+    if (!kb) {
+      return [] as DocumentRecord[];
+    }
+  }
+
   const docs = await db.document.findMany({
-    where: knowledgeBaseId ? { knowledgeBaseId } : undefined,
+    where: knowledgeBaseId
+      ? { knowledgeBaseId }
+      : { knowledgeBase: { userId } },
     orderBy: { createdAt: "desc" },
     include: { _count: RETRIEVAL_CHUNK_COUNT },
   });
@@ -429,8 +447,9 @@ async function saveUploadFile(
 export async function createUploadedDocument(
   file: File,
   category = "默认类目",
-  knowledgeBaseId?: string,
-  chunkConfigRaw?: unknown,
+  knowledgeBaseId: string | undefined,
+  chunkConfigRaw: unknown | undefined,
+  userId: string,
 ) {
   const db = await getReadyDb();
   if (!db) {
@@ -459,8 +478,10 @@ export async function createUploadedDocument(
   }
 
   const kb = knowledgeBaseId
-    ? await db.knowledgeBase.findUnique({ where: { id: knowledgeBaseId } })
-    : await ensureDefaultKnowledgeBase();
+    ? await db.knowledgeBase.findFirst({
+        where: { id: knowledgeBaseId, userId },
+      })
+    : await ensureDefaultKnowledgeBase(userId);
   if (!kb) {
     throw new Error("知识库不存在");
   }
@@ -696,8 +717,18 @@ export async function queueDocumentReprocess(
 }
 
 /** @deprecated Prefer createUploadedDocument + processDocumentIngest */
-export async function ingestUploadedFile(file: File, category = "默认类目") {
-  const created = await createUploadedDocument(file, category);
+export async function ingestUploadedFile(
+  file: File,
+  category = "默认类目",
+  userId: string,
+) {
+  const created = await createUploadedDocument(
+    file,
+    category,
+    undefined,
+    undefined,
+    userId,
+  );
   const processed = await processDocumentIngest(created.id);
   return processed ?? created;
 }

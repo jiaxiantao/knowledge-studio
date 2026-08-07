@@ -119,6 +119,116 @@ function buildMessages(
   return messages;
 }
 
+function extractMessageText(message: {
+  content?: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+} | null | undefined) {
+  const content = message?.content?.trim() ?? "";
+  const reasoning =
+    message?.reasoning_content?.trim() || message?.reasoning?.trim() || "";
+
+  if (reasoning && content) {
+    if (/<\s*thinking\s*>/i.test(content)) {
+      return content;
+    }
+    return [
+      "<thinking>",
+      reasoning,
+      "</thinking>",
+      "<conclusion>",
+      content,
+      "</conclusion>",
+    ].join("\n");
+  }
+
+  if (content) {
+    return content;
+  }
+
+  if (reasoning) {
+    return [
+      "<thinking>",
+      reasoning,
+      "</thinking>",
+      "<conclusion>",
+      "（模型仅返回了推理过程，未给出结论。）",
+      "</conclusion>",
+    ].join("\n");
+  }
+
+  return "未能生成回答，请稍后重试。";
+}
+
+type ChatDelta = {
+  content?: string | null;
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+};
+
+/**
+ * Ollama qwen3 等思考模型常把推理写在 delta.reasoning，content 延后才有字。
+ * 将其映射为项目已有的 <thinking>/<conclusion> 标签，避免流式「空等数秒」。
+ */
+async function* normalizeLlmStream(
+  stream: AsyncIterable<{ choices: Array<{ delta?: ChatDelta }> }>,
+) {
+  let openedNativeThinking = false;
+  let closedNativeThinking = false;
+  let openedConclusion = false;
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta;
+    if (!delta) {
+      continue;
+    }
+
+    const reasoning = delta.reasoning_content || delta.reasoning || "";
+    const content = delta.content || "";
+
+    if (reasoning) {
+      if (!openedNativeThinking) {
+        openedNativeThinking = true;
+        yield "<thinking>\n";
+      }
+      yield reasoning;
+    }
+
+    if (!content) {
+      continue;
+    }
+
+    if (openedNativeThinking && !closedNativeThinking) {
+      closedNativeThinking = true;
+      const trimmed = content.trimStart();
+      const hasOwnTags =
+        /^<\s*\/?\s*thinking\s*>/i.test(trimmed) ||
+        /^<\s*conclusion\s*>/i.test(trimmed);
+
+      if (hasOwnTags) {
+        yield "\n</thinking>\n";
+        yield content;
+      } else {
+        yield "\n</thinking>\n<conclusion>\n";
+        openedConclusion = true;
+        yield content;
+      }
+      continue;
+    }
+
+    yield content;
+  }
+
+  if (openedNativeThinking && !closedNativeThinking) {
+    yield "\n</thinking>\n<conclusion>\n（模型仅返回了推理过程，未给出结论。）\n</conclusion>";
+    return;
+  }
+
+  if (openedConclusion) {
+    yield "\n</conclusion>";
+  }
+}
+
 export async function answerQuestionWithNotes({
   question,
   contextBlocks,
@@ -136,13 +246,16 @@ export async function answerQuestionWithNotes({
     messages: buildMessages(question, context, model, hasContext, turns),
   });
 
-  return (
-    response.choices[0]?.message?.content?.trim() ??
-    "未能生成回答，请稍后重试。"
+  return extractMessageText(
+    response.choices[0]?.message as {
+      content?: string | null;
+      reasoning?: string | null;
+      reasoning_content?: string | null;
+    },
   );
 }
 
-export async function* streamAnswerQuestionWithNotes({
+export async function openAnswerQuestionStream({
   question,
   contextBlocks,
   history,
@@ -161,13 +274,13 @@ export async function* streamAnswerQuestionWithNotes({
     messages: buildMessages(question, context, model, hasContext, turns),
   });
 
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content;
+  return normalizeLlmStream(stream);
+}
 
-    if (delta) {
-      yield delta;
-    }
-  }
+export async function* streamAnswerQuestionWithNotes(
+  args: AnswerQuestionArgs & { temperature?: number },
+) {
+  yield* await openAnswerQuestionStream(args);
 }
 
 export function getMockStreamAnswer(question: string) {

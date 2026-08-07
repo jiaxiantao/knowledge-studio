@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   deleteDocumentChunk,
   getDocumentChunk,
   updateDocumentChunk,
 } from "@/lib/documents-service";
+import {
+  assertDocumentOwned,
+  KnowledgeBaseAccessError,
+} from "@/lib/ownership";
 
 type RouteProps = {
   params: Promise<{ id: string; chunkId: string }>;
@@ -24,8 +29,14 @@ async function assertChunkBelongsToDocument(documentId: string, chunkId: string)
 }
 
 export async function PATCH(request: Request, { params }: RouteProps) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id, chunkId } = await params;
+    await assertDocumentOwned(id, auth.user.id);
     const owned = await assertChunkBelongsToDocument(id, chunkId);
     if (owned.error) {
       return owned.error;
@@ -45,6 +56,12 @@ export async function PATCH(request: Request, { params }: RouteProps) {
 
     return NextResponse.json({ chunk });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Failed to update chunk";
     const status =
@@ -53,9 +70,15 @@ export async function PATCH(request: Request, { params }: RouteProps) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: RouteProps) {
+export async function DELETE(request: Request, { params }: RouteProps) {
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const { id, chunkId } = await params;
+    await assertDocumentOwned(id, auth.user.id);
     const owned = await assertChunkBelongsToDocument(id, chunkId);
     if (owned.error) {
       return owned.error;
@@ -64,6 +87,12 @@ export async function DELETE(_request: Request, { params }: RouteProps) {
     await deleteDocumentChunk(chunkId);
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof KnowledgeBaseAccessError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Failed to delete chunk";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireUser } from "@/lib/auth/require-user";
 import {
   attachOrphanSessionsToKnowledgeBase,
   createChatSession,
@@ -10,6 +11,7 @@ import {
 import { createEmptySession } from "@/lib/chat-sessions";
 import { ensureDefaultKnowledgeBase } from "@/lib/documents-service";
 import type { ChatSession } from "@/lib/chat-types";
+import { assertKnowledgeBaseOwned } from "@/lib/ownership";
 import { isStaticSite } from "@/lib/site-mode";
 
 const branchSchema = z.object({
@@ -42,6 +44,11 @@ export async function GET(request: Request) {
     return staticBlocked();
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const knowledgeBaseId = new URL(request.url).searchParams.get(
       "knowledgeBaseId",
@@ -53,17 +60,27 @@ export async function GET(request: Request) {
       );
     }
 
-    const defaultKb = await ensureDefaultKnowledgeBase();
+    await assertKnowledgeBaseOwned(knowledgeBaseId, auth.user.id);
+
+    const defaultKb = await ensureDefaultKnowledgeBase(auth.user.id);
     const includeOrphans = knowledgeBaseId === defaultKb.id;
     if (includeOrphans) {
-      await attachOrphanSessionsToKnowledgeBase(knowledgeBaseId);
+      await attachOrphanSessionsToKnowledgeBase(knowledgeBaseId, auth.user.id);
     }
 
-    const sessions = await listChatSessions(knowledgeBaseId, {
+    const sessions = await listChatSessions(auth.user.id, knowledgeBaseId, {
       includeOrphans,
     });
     return NextResponse.json({ sessions });
   } catch (error) {
+    if (error instanceof Error && error.name === "KnowledgeBaseAccessError") {
+      const status =
+        "status" in error && typeof error.status === "number"
+          ? error.status
+          : 404;
+      return NextResponse.json({ error: error.message }, { status });
+    }
+
     return NextResponse.json(
       {
         error:
@@ -79,6 +96,11 @@ export async function POST(request: Request) {
     return staticBlocked();
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = (await request.json().catch(() => ({}))) as {
       session?: unknown;
@@ -86,16 +108,23 @@ export async function POST(request: Request) {
     };
 
     const knowledgeBaseId = body.knowledgeBaseId?.trim();
+    if (knowledgeBaseId) {
+      await assertKnowledgeBaseOwned(knowledgeBaseId, auth.user.id);
+    }
+
     const session = body.session
       ? (sessionSchema.parse(body.session) as ChatSession)
       : createEmptySession("新对话", knowledgeBaseId);
 
-    const created = await createChatSession({
-      ...session,
-      knowledgeBaseId:
-        session.knowledgeBaseId ?? knowledgeBaseId ?? null,
-      updatedAt: session.updatedAt ?? new Date().toISOString(),
-    });
+    const created = await createChatSession(
+      {
+        ...session,
+        knowledgeBaseId:
+          session.knowledgeBaseId ?? knowledgeBaseId ?? null,
+        updatedAt: session.updatedAt ?? new Date().toISOString(),
+      },
+      auth.user.id,
+    );
 
     return NextResponse.json({ session: created }, { status: 201 });
   } catch (error) {
@@ -104,6 +133,14 @@ export async function POST(request: Request) {
         { error: error.issues[0]?.message ?? "Invalid session" },
         { status: 400 },
       );
+    }
+
+    if (error instanceof Error && error.name === "KnowledgeBaseAccessError") {
+      const status =
+        "status" in error && typeof error.status === "number"
+          ? error.status
+          : 404;
+      return NextResponse.json({ error: error.message }, { status });
     }
 
     return NextResponse.json(
@@ -122,6 +159,11 @@ export async function PUT(request: Request) {
     return staticBlocked();
   }
 
+  const auth = await requireUser(request);
+  if (auth.error) {
+    return auth.error;
+  }
+
   try {
     const body = z
       .object({ sessions: z.array(sessionSchema).min(1) })
@@ -132,6 +174,7 @@ export async function PUT(request: Request) {
         ...(session as ChatSession),
         updatedAt: session.updatedAt ?? new Date().toISOString(),
       })),
+      auth.user.id,
     );
 
     return NextResponse.json({ sessions });
