@@ -30,7 +30,8 @@ pnpm dev
 | `pnpm lint` | ESLint |
 | `pnpm build` | 全栈构建（standalone） |
 | `pnpm build:pages` | GitHub Pages 静态导出 |
-| `pnpm db:setup` | 推送 schema 并 seed |
+| `pnpm db:extensions` | 启用 `vector` + `pg_trgm`（`db:setup` 会自动调用） |
+| `pnpm db:setup` | 扩展 → 推送 schema → seed |
 
 CI 会在 push / PR 时自动跑 typecheck、lint、db setup、build，以及独立的 Pages 静态导出构建。
 

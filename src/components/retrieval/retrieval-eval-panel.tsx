@@ -121,6 +121,7 @@ export function RetrievalEvalPanel({
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reload eval meta when case set changes
     void loadMeta(caseSet);
   }, [loadMeta, caseSet]);
 

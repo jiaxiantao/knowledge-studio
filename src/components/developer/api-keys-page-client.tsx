@@ -71,6 +71,7 @@ export function ApiKeysPageClient() {
   }, [user]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refetch when user changes
     void loadKeys();
   }, [loadKeys]);
 

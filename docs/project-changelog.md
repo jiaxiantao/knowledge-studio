@@ -7,6 +7,23 @@
 
 ## 2026-08-07
 
+### Docker Desktop → Colima 数据库迁移
+
+| 项 | 内容 |
+|----|------|
+| **问题** | 卸载/重装 Docker Desktop 后 Colima 起的是空库；Desktop 与 Colima 各有一份 `knowledge-studio_postgres-data`，`localhost:5432` 曾连到空库。 |
+| **方案** | Desktop 卷 `pg_dump --clean` 导出 → Colima 库 `psql` 导入；默认 `docker context` 切到 `colima`；停 Desktop 上的 knowledge-studio 容器。 |
+| **结果** | Colima 库已恢复 6 用户 / 19 知识库 / 138 文档 / 4023 分块；备份在 `/tmp/knowledge-studio-migrate.sql`（~31MB）。 |
+
+### `db:setup` 先于 push 启用 pgvector
+
+| 项 | 内容 |
+|----|------|
+| **问题** | Colima 新起 Postgres 卷后 `pnpm db:setup` 报 `type "vector" does not exist`。 |
+| **原因** | `db push` 在 seed 之前执行，而 `vector`/`pg_trgm` 扩展原先只在 seed 里创建。 |
+| **方案** | 新增 `scripts/db-extensions.ts` + `pnpm db:extensions`，`db:setup` 改为先扩展、再 push、再 seed；CI 去掉重复的 inline 扩展步骤。 |
+| **结果** | 本地 `docker compose up -d db && pnpm db:setup` 可正常建表；扩展已在当前库启用，用户本地再跑一次 setup 即可。 |
+
 ### 本机 Docker 全栈 → 内网机房可迁移
 
 | 项 | 内容 |

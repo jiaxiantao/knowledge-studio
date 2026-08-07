@@ -68,6 +68,7 @@ export function ApiPlaygroundPageClient() {
 
   useEffect(() => {
     if (!user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear selection when logged out
       setAgentIds([]);
       return;
     }

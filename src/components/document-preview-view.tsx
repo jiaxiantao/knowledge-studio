@@ -189,6 +189,7 @@ export function DocumentPreviewView({
   }, [id, staticSite]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reload preview when document changes
     void loadPreview();
   }, [loadPreview]);
 

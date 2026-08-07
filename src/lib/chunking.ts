@@ -149,7 +149,7 @@ function recursiveSplit(
   }
 
   const [separator = "", ...rest] = separators;
-  let splits =
+  const splits =
     separator === ""
       ? slidingWindows(normalized, maxChars, overlap)
       : splitKeepSeparator(normalized, separator);
